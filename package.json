@@ -1,0 +1,13 @@
+{
+  "name": "senbei",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "zip": "cd extension && zip -qr ../senbei.zip ."
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.6",
+    "playwright": "1.64.1"
+  }
+}
