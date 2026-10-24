@@ -1,10 +1,10 @@
 {
-  "name": "senbei",
+  "name": "cookie-viewer",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "bun test",
-    "zip": "cd extension && zip -qr ../senbei.zip ."
+    "zip": "cd extension && zip -qr ../cookie-viewer.zip ."
   },
   "devDependencies": {
     "@types/chrome": "^0.3.6",

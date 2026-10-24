@@ -9,7 +9,7 @@ const XSS = "<img src=x onerror=document.title='pwned'>";
 let server: ReturnType<typeof Bun.serve>;
 let ctx: BrowserContext;
 let extId: string;
-const tmp = mkdtempSync(join(tmpdir(), "senbei-test-"));
+const tmp = mkdtempSync(join(tmpdir(), "cookie-viewer-test-"));
 
 // Chrome derives an unpacked extension's id from its absolute path.
 function unpackedId(path: string) {

@@ -1,4 +1,4 @@
-# senbei
+# cookie-viewer
 
 A minimal, read-only cookie viewer for Chrome.
 
@@ -35,7 +35,7 @@ bun test
 The tests load the extension into Playwright's Chromium and check the cookie list against a local server, including that cookie values are never interpreted as HTML.
 
 ```bash
-bun run zip   # builds senbei.zip from extension/ for the Chrome Web Store
+bun run zip   # builds cookie-viewer.zip from extension/ for the Chrome Web Store
 ```
 
 ## License

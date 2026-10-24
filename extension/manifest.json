@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "senbei - Cookie Viewer",
+  "name": "Cookie Viewer",
   "version": "0.1.0",
   "description": "Read-only cookie viewer for the current tab. No network, no storage.",
   "permissions": [
