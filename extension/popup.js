@@ -1,13 +1,19 @@
 // Cookie の値は信頼できない入力なので、DOM には textContent でだけ入れる (innerHTML は使わない)。
 const $ = (id) => document.getElementById(id);
-const SAME_SITE = { lax: "Lax", strict: "Strict", no_restriction: "None" };
+// chrome.cookies の sameSite の値を、Set-Cookie の属性の書き方にする。
+function sameSiteAttr(v) {
+  if (v === "lax") return "Lax";
+  if (v === "strict") return "Strict";
+  if (v === "no_restriction") return "None";
+  return "";
+}
 let cookies = null;
 
 function attrs(c) {
   const a = [];
   if (c.secure) a.push("Secure");
   if (c.httpOnly) a.push("HttpOnly");
-  if (SAME_SITE[c.sameSite]) a.push("SameSite=" + SAME_SITE[c.sameSite]);
+  if (sameSiteAttr(c.sameSite)) a.push("SameSite=" + sameSiteAttr(c.sameSite));
   if (c.partitionKey) {
     const k = [c.partitionKey.topLevelSite, c.partitionKey.hasCrossSiteAncestor && "cross-site"].filter(Boolean);
     a.push(k.length ? "Partitioned(" + k.join(", ") + ")" : "Partitioned");
@@ -28,7 +34,7 @@ function render() {
   const q = $("filter").value.toLowerCase();
   const reveal = $("reveal").checked;
   const shown = cookies.filter((c) => c.name.toLowerCase().includes(q));
-  const tbody = $("tbl").tBodies[0];
+  const tbody = $("rows");
   tbody.replaceChildren();
   for (const c of shown) {
     const tr = tbody.insertRow();
@@ -66,6 +72,7 @@ async function load(url) {
 function offerRevoke(url, origins) {
   $("revoke").hidden = false;
   $("revoke").onclick = async () => {
+    $("revoke").disabled = true;
     try {
       if (!(await chrome.permissions.remove({ origins }))) {
         $("msg").textContent = "取り消せませんでした";
@@ -79,10 +86,12 @@ function offerRevoke(url, origins) {
     } catch (e) {
       $("msg").textContent = "取り消せませんでした: " + e.message;
       return;
+    } finally {
+      $("revoke").disabled = false;
     }
     cookies = null;
     $("tbl").hidden = true;
-    $("tbl").tBodies[0].replaceChildren();
+    $("rows").replaceChildren();
     $("revoke").hidden = true;
     $("msg").textContent = "許可を取り消しました";
     askGrant(url, origins);
@@ -92,12 +101,15 @@ function offerRevoke(url, origins) {
 function askGrant(url, origins) {
   $("grant").hidden = false;
   $("grant").onclick = async () => {
+    $("grant").disabled = true;
     let granted;
     try {
       granted = await chrome.permissions.request({ origins });
     } catch (e) {
       $("msg").textContent = "許可を求められませんでした: " + e.message;
       return;
+    } finally {
+      $("grant").disabled = false;
     }
     if (!granted) {
       $("msg").textContent = "許可されませんでした";
@@ -109,9 +121,10 @@ function askGrant(url, origins) {
 }
 
 // 取り消しボタンは読み込みが終わってから出す。先に出すと、取り消した後に読み込みが終わって一覧が戻る。
+// 読み込みに失敗しても許可は残っているので、取り消しは出す。
 async function showGranted(url, origins) {
   await load(url);
-  if (cookies) offerRevoke(url, origins);
+  offerRevoke(url, origins);
 }
 
 (async () => {

@@ -55,6 +55,8 @@ beforeAll(async () => {
       chrome.permissions.contains = (async () => false) as never;
       chrome.permissions.request = (async (p: unknown) => {
         if (q.get("grant") === "throw") throw new Error("no gesture");
+        w.__requestCalls = (w.__requestCalls ?? 0) + 1;
+        await new Promise((r) => setTimeout(r, 200));
         w.__requested = p;
         return q.get("grant") !== "deny";
       }) as never;
@@ -66,6 +68,8 @@ beforeAll(async () => {
       chrome.permissions.contains = (async (p: never) => (removed ? mode === "still" : contains(p))) as never;
       chrome.permissions.remove = (async (p: unknown) => {
         if (mode === "throw") throw new Error("not removable");
+        w.__removeCalls = (w.__removeCalls ?? 0) + 1;
+        await new Promise((r) => setTimeout(r, 200));
         w.__removed = p;
         removed = mode !== "fail";
         return mode !== "fail";
@@ -165,7 +169,8 @@ test("says so when reading fails", async () => {
   const p = await openPopup(`${SITE}/?fail=read`);
   await waitMsg(p, "読み込めませんでした: boom");
   expect(await p.locator("#tbl").isHidden()).toBe(true);
-  expect(await p.locator("#revoke").isHidden()).toBe(true);
+  // The site is still granted, so it can still be revoked.
+  expect(await p.locator("#revoke").isHidden()).toBe(false);
 }, 30_000);
 
 test("asks for permission instead of reading a site that was not granted", async () => {
@@ -267,10 +272,14 @@ test("the CSP blocks requests, and a full session sends, opens and stores nothin
   ctx.on("page", onPage);
 
   const p = await openGranted();
+  await p.evaluate(() => navigator.clipboard.writeText("before"));
   await p.check("#reveal");
   await p.fill("#filter", "s");
+  // Listing, revealing and filtering put nothing on the clipboard; only the copy button does.
+  expect(await p.evaluate(() => navigator.clipboard.readText())).toBe("before");
   await p.getByRole("button", { name: "copy value of sid" }).click();
   await p.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent === "ok"));
+  expect(await p.evaluate(() => navigator.clipboard.readText())).toBe("secret123");
   // Nothing the popup did on its own tripped the CSP (this would also catch an inline style left in popup.html).
   expect(await p.evaluate(() => (window as any).__violations)).toEqual([]);
 
@@ -299,9 +308,11 @@ test("the CSP blocks requests, and a full session sends, opens and stores nothin
   expect(await p.evaluate(() => getComputedStyle(document.body).width)).toBe("640px");
 }, 30_000);
 
-// CSP covers requests a page makes, not navigation, new tabs, WebRTC or chrome.* APIs. Those are kept out
-// by the code not containing them. This test pins everything popup.js touches to an allowlist, so any new
-// global, chrome.* API, DOM property or syntax fails here until it is added on purpose.
+// CSP covers requests a page makes, not navigation, new tabs, WebRTC, the clipboard or chrome.* APIs. Those
+// are kept out by the code not containing them. This test pins everything popup.js can reach: the browser
+// objects (chrome, document, navigator) may only be used as fixed dotted API calls, bracket access is not
+// allowed at all, and every property name and kind of syntax is listed. Anything new fails here until it
+// is added on purpose.
 test("popup.js uses nothing outside the allowlist", async () => {
   const dir = resolve(import.meta.dir, "../extension");
   const src = readFileSync(join(dir, "popup.js"), "utf8");
@@ -327,43 +338,61 @@ test("popup.js uses nothing outside the allowlist", async () => {
     if (n.type === "CatchClause") declare(n.param);
   });
 
+  const roots = ["chrome", "document", "navigator"];
   const globals = new Set<string>();
   const props = new Set<string>();
-  const chromeApis = new Set<string>();
+  const apis: string[] = [];
+  const looseRoots: string[] = [];
   const computed: string[] = [];
   const attrs: string[] = [];
-  const dotted = (m: any): string | null =>
-    m.type === "Identifier" ? m.name : m.type === "MemberExpression" && !m.computed && dotted(m.object) ? `${dotted(m.object)}.${m.property.name}` : null;
+  const clipboard: string[] = [];
   fullAncestor(ast, (n: any, _state: unknown, ancestors: any[]) => {
     const parent = ancestors[ancestors.length - 2];
     if (n.type === "Identifier") {
       if (parent?.type === "MemberExpression" && parent.property === n && !parent.computed) return;
-      if (parent?.type === "Property" && parent.key === n && !parent.computed) return;
-      if (!declared.has(n.name)) globals.add(n.name);
+      if (parent?.type === "Property" && parent.key === n && !parent.computed && !parent.shorthand) return;
+      if (declared.has(n.name)) return;
+      globals.add(n.name);
+      if (!roots.includes(n.name)) return;
+      // A browser object must be the start of a dotted chain that is called; anything else (aliasing it,
+      // wrapping it in an expression, passing it along) would let later code reach APIs not listed here.
+      let i = ancestors.length - 2;
+      let path = n.name;
+      while (ancestors[i]?.type === "MemberExpression" && ancestors[i].object === ancestors[i + 1] && !ancestors[i].computed) {
+        path += "." + ancestors[i].property.name;
+        i--;
+      }
+      const top = ancestors[i];
+      if (top?.type === "CallExpression" && top.callee === ancestors[i + 1] && path !== n.name) apis.push(path);
+      else looseRoots.push(src.slice(n.start, n.end + 20));
     }
     if (n.type === "MemberExpression") {
       if (n.computed) computed.push(src.slice(n.start, n.end));
       else props.add(n.property.name);
-      const path = dotted(n);
-      if (path?.startsWith("chrome.") && !(parent?.type === "MemberExpression" && parent.object === n)) chromeApis.add(path);
     }
-    if (n.type === "CallExpression" && n.callee.type === "MemberExpression" && n.callee.property.name === "setAttribute") {
-      attrs.push(n.arguments[0]?.type === "Literal" ? n.arguments[0].value : "<not a literal>");
+    if (n.type === "CallExpression" && n.callee.type === "MemberExpression" && !n.callee.computed) {
+      if (n.callee.property.name === "setAttribute") {
+        attrs.push(n.arguments[0]?.type === "Literal" ? n.arguments[0].value : "<not a literal>");
+      }
+      if (n.callee.property.name === "writeText") clipboard.push(src.slice(n.start, n.end));
     }
   });
 
+  expect(computed).toEqual([]);
+  expect(looseRoots).toEqual([]);
   expect([...globals].sort()).toEqual(["Boolean", "Date", "URL", "chrome", "document", "navigator"]);
-  expect([...chromeApis].sort()).toEqual(["chrome.cookies.getAll", "chrome.permissions.contains",
-    "chrome.permissions.remove", "chrome.permissions.request", "chrome.tabs.query"]);
+  expect([...new Set(apis)].sort()).toEqual(["chrome.cookies.getAll", "chrome.permissions.contains",
+    "chrome.permissions.remove", "chrome.permissions.request", "chrome.tabs.query", "document.createElement",
+    "document.getElementById", "navigator.clipboard.writeText"]);
+  // The clipboard leaves the browser (history, sync), so it may only ever receive the value of the row clicked.
+  expect(clipboard).toEqual(["navigator.clipboard.writeText(c.value)"]);
   expect([...props].sort()).toEqual(["append", "checked", "className", "clipboard", "contains", "cookies",
-    "createElement", "domain", "expirationDate", "filter", "getAll", "getElementById", "hasCrossSiteAncestor",
-    "hidden", "httpOnly", "includes", "insertCell", "insertRow", "join", "length", "localeCompare", "message",
-    "name", "onchange", "onclick", "oninput", "origin", "partitionKey", "path", "permissions", "push", "query",
-    "remove", "replaceChildren", "request", "sameSite", "secure", "session", "setAttribute", "sort", "tBodies",
-    "tabs", "test", "textContent", "then", "toLocaleString", "toLowerCase", "topLevelSite", "url", "value",
-    "writeText"]);
-  // Bracket access could build any name from strings, so only these two are allowed.
-  expect([...new Set(computed)].sort()).toEqual(['$("tbl").tBodies[0]', "SAME_SITE[c.sameSite]"]);
+    "createElement", "disabled", "domain", "expirationDate", "filter", "getAll", "getElementById",
+    "hasCrossSiteAncestor", "hidden", "httpOnly", "includes", "insertCell", "insertRow", "join", "length",
+    "localeCompare", "message", "name", "onchange", "onclick", "oninput", "origin", "partitionKey", "path",
+    "permissions", "push", "query", "remove", "replaceChildren", "request", "sameSite", "secure", "session",
+    "setAttribute", "sort", "tabs", "test", "textContent", "then", "toLocaleString", "toLowerCase", "topLevelSite",
+    "url", "value", "writeText"]);
   expect(attrs).toEqual(["aria-label"]);
   const allowedSyntax = ["ArrayExpression", "ArrayPattern", "ArrowFunctionExpression", "AssignmentExpression",
     "AwaitExpression", "BinaryExpression", "BlockStatement", "CallExpression", "CatchClause", "ConditionalExpression",
@@ -386,13 +415,38 @@ test("popup.js uses nothing outside the allowlist", async () => {
   await p.close();
 }, 30_000);
 
+// popup.html is pinned whole: any new element, attribute or script must be added here on purpose.
+const POPUP_HTML = `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<div id="host" class="muted"></div>
+<div id="bar">
+  <input id="filter" placeholder="名前で絞り込み">
+  <label><input type="checkbox" id="reveal"> 値を表示</label>
+</div>
+<button id="grant" hidden>このサイトの Cookie を読む許可を出す</button>
+<div id="msg" class="muted"></div>
+<table hidden id="tbl">
+  <colgroup><col><col><col><col><col></colgroup>
+  <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>属性 / 期限</th><th>Copy</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<button id="revoke" hidden>このサイトの許可を取り消す</button>
+<script src="popup.js"></script>
+</body>
+</html>
+`;
+
 test("the package files, page and manifest are exactly what is reviewed", () => {
   const dir = resolve(import.meta.dir, "../extension");
-  const html = readFileSync(join(dir, "popup.html"), "utf8");
   const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
 
-  expect(html).not.toMatch(/<(a|form|iframe|img|object|embed|meta http-equiv)\b|style=|on[a-z]+=/i);
-  expect([...html.matchAll(/<(script|link)\b[^>]*>/g)].map((m) => m[0])).toEqual(['<link rel="stylesheet" href="popup.css">', '<script src="popup.js">']);
+  expect(readFileSync(join(dir, "popup.html"), "utf8")).toBe(POPUP_HTML);
+  expect(readFileSync(join(dir, "popup.css"), "utf8")).not.toMatch(/url\(|@import/i);
   expect(Object.keys(manifest).sort()).toEqual(["action", "content_security_policy", "description", "icons",
     "incognito", "manifest_version", "minimum_chrome_version", "name", "optional_host_permissions", "permissions",
     "version"]);
@@ -406,6 +460,16 @@ test("the package files, page and manifest are exactly what is reviewed", () => 
   expect([...files].sort()).toEqual(["icons/icon128.png", "icons/icon16.png", "icons/icon32.png", "icons/icon48.png",
     "manifest.json", "popup.css", "popup.html", "popup.js"]);
 });
+
+test("a double click asks for the permission once and revokes once", async () => {
+  const p = await openPopup(`${SITE}/app?grant&revoke`);
+  await p.dblclick("#grant");
+  await waitMsg(p, "6 件");
+  expect(await p.evaluate(() => (window as any).__requestCalls)).toBe(1);
+  await p.dblclick("#revoke");
+  await waitMsg(p, "許可を取り消しました");
+  expect(await p.evaluate(() => (window as any).__removeCalls)).toBe(1);
+}, 30_000);
 
 // Last, so it sees the errors of every popup above.
 test("no popup threw", () => {
