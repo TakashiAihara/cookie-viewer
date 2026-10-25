@@ -47,7 +47,7 @@ These tests stop a mistake in this repository from shipping. They are not a guar
 - Lists name / value / domain + path / attributes (Secure, HttpOnly, SameSite, expiry) of the cookies for the current tab's URL
 - Partitioned cookies (CHIPS) are listed too, labeled with the top-level site they belong to. Cookies this site set while embedded in other sites appear here, although this tab does not send them. Those set under a cross-site ancestor are labeled `cross-site`
 - In an incognito window (if you allow the extension there) it shows the incognito cookies, not the regular profile's
-- Values are masked until you tick "値を表示" (show values), so they do not leak on a shared screen
+- Values are masked until you tick "Show values", so they do not leak on a shared screen
 - Filter by name, copy a value to the clipboard
 - Revoke the current site's permission from the popup
 

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <link rel="stylesheet" href="popup.css">
@@ -7,17 +7,17 @@
 <body>
 <div id="host" class="muted"></div>
 <div id="bar">
-  <input id="filter" placeholder="名前で絞り込み">
-  <label><input type="checkbox" id="reveal"> 値を表示</label>
+  <input id="filter" placeholder="Filter by name">
+  <label><input type="checkbox" id="reveal"> Show values</label>
 </div>
-<button id="grant" hidden>このサイトの Cookie を読む許可を出す</button>
+<button id="grant" hidden>Allow reading this site's cookies</button>
 <div id="msg" class="muted"></div>
 <table hidden id="tbl">
   <colgroup><col><col><col><col><col></colgroup>
-  <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>属性 / 期限</th><th>Copy</th></tr></thead>
+  <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>Attributes / Expires</th><th>Copy</th></tr></thead>
   <tbody id="rows"></tbody>
 </table>
-<button id="revoke" hidden>このサイトの許可を取り消す</button>
+<button id="revoke" hidden>Revoke access to this site</button>
 <script src="popup.js"></script>
 </body>
 </html>

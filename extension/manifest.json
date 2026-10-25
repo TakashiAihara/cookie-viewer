@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Secure Cookie Viewer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Read-only cookie viewer for the current tab. No network, no storage.",
   "minimum_chrome_version": "119",
   "incognito": "split",
