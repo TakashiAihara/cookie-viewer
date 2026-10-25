@@ -1,0 +1,15 @@
+body { font: 12px/1.4 system-ui, sans-serif; margin: 8px; width: 640px; }
+#bar { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+#filter { flex: 1; }
+table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+th, td { border-bottom: 1px solid #ddd; padding: 3px 4px; text-align: left; vertical-align: top; }
+td { overflow-wrap: anywhere; }
+col:nth-child(1) { width: 20%; }
+col:nth-child(2) { width: 32%; }
+col:nth-child(3) { width: 15%; }
+col:nth-child(4) { width: 24%; }
+col:nth-child(5) { width: 9%; }
+.v { font-family: ui-monospace, monospace; word-break: break-all; }
+td button { white-space: nowrap; }
+.muted { color: #888; }
+#revoke { margin-top: 6px; }

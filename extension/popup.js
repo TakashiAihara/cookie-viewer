@@ -63,6 +63,21 @@ async function load(url) {
   render();
 }
 
+function offerRevoke(origins) {
+  $("revoke").hidden = false;
+  $("revoke").onclick = async () => {
+    if (!(await chrome.permissions.remove({ origins }))) {
+      $("msg").textContent = "取り消せませんでした";
+      return;
+    }
+    cookies = null;
+    $("tbl").hidden = true;
+    $("tbl").tBodies[0].replaceChildren();
+    $("revoke").hidden = true;
+    $("msg").textContent = "許可を取り消しました";
+  };
+}
+
 (async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const url = tab && tab.url;
@@ -74,12 +89,16 @@ async function load(url) {
   $("host").textContent = origin;
   const origins = [origin + "/*"];
 
-  if (await chrome.permissions.contains({ origins })) return load(url);
+  if (await chrome.permissions.contains({ origins })) {
+    offerRevoke(origins);
+    return load(url);
+  }
 
   $("grant").hidden = false;
   $("grant").onclick = async () => {
     if (await chrome.permissions.request({ origins })) {
       $("grant").hidden = true;
+      offerRevoke(origins);
       load(url);
     } else {
       $("msg").textContent = "許可されませんでした";

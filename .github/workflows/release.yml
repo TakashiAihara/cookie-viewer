@@ -1,0 +1,30 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Tag must match the manifest version
+        run: |
+          v="$(jq -r .version extension/manifest.json)"
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match manifest version $v"; exit 1; }
+      - run: cd extension && zip -qrX ../secure-cookie-viewer.zip .
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: secure-cookie-viewer.zip
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sum="$(sha256sum secure-cookie-viewer.zip | cut -d' ' -f1)"
+          gh release create "$GITHUB_REF_NAME" secure-cookie-viewer.zip --title "$GITHUB_REF_NAME" \
+            --notes "sha256: \`$sum\`. Verify with \`gh attestation verify secure-cookie-viewer.zip --repo $GITHUB_REPOSITORY\`."

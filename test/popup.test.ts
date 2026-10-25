@@ -42,6 +42,10 @@ beforeAll(async () => {
       if (url.includes("fail=read")) chrome.cookies.getAll = (async () => { throw new Error("boom"); }) as never;
       if (url.includes("fail=copy")) navigator.clipboard.writeText = async () => { throw new Error("denied"); };
       if (url.includes("deny")) chrome.permissions.request = (async () => false) as never;
+      if (url.includes("revoke")) {
+        const ok = !url.includes("revoke=fail");
+        chrome.permissions.remove = (async (p: unknown) => ((window as any).__removed = p, ok)) as never;
+      }
     }
   });
 
@@ -159,6 +163,55 @@ test("refuses non-http pages, and keeps refusing after the controls are touched"
   await p.fill("#filter", "x");
   expect(await msg(p)).toBe("http / https のページでだけ使えます");
   expect(await p.locator("#tbl").isHidden()).toBe(true);
+}, 30_000);
+
+test("cannot reach the network or keep anything: the CSP blocks requests and nothing is stored", async () => {
+  const outside: string[] = [];
+  const onRequest = (r: { url(): string }) => { if (!r.url().startsWith("chrome-extension://")) outside.push(r.url()); };
+  ctx.on("request", onRequest);
+  const p = await openGranted();
+  const blocked = await p.evaluate(async () => {
+    const violations: string[] = [];
+    document.addEventListener("securitypolicyviolation", (e) => violations.push(e.violatedDirective));
+    const fetched = await fetch("https://example.com/").then(() => "fetched", () => "rejected");
+    await new Promise((r) => setTimeout(r, 100));
+    return { fetched, violations };
+  });
+  ctx.off("request", onRequest);
+  expect(blocked.fetched).toBe("rejected");
+  expect(blocked.violations).toContain("connect-src");
+  expect(outside).toEqual([]);
+  await p.check("#reveal");
+  await p.getByRole("button", { name: "copy value of sid" }).click();
+  const stored = await p.evaluate(async () => [localStorage.length, sessionStorage.length, (await indexedDB.databases()).length]);
+  expect(stored).toEqual([0, 0, 0]);
+  // The stylesheet is a separate file because the CSP forbids inline styles; this checks it still applies.
+  expect(await p.evaluate(() => getComputedStyle(document.body).width)).toBe("640px");
+}, 30_000);
+
+test("revokes the site's permission and clears the list", async () => {
+  const p = await openGranted("?revoke");
+  await p.click("#revoke");
+  await p.waitForFunction(() => document.getElementById("msg")!.textContent === "許可を取り消しました");
+  expect(await p.evaluate(() => (window as any).__removed)).toEqual({ origins: [`${SITE}/*`] });
+  expect(await p.locator("#tbl").isHidden()).toBe(true);
+  expect(await p.locator("tbody tr").count()).toBe(0);
+  expect(await p.locator("#revoke").isHidden()).toBe(true);
+  await p.check("#reveal");
+  expect(await p.locator("#tbl").isHidden()).toBe(true);
+}, 30_000);
+
+test("says so when revoking fails, and keeps the list", async () => {
+  const p = await openGranted("?revoke=fail");
+  await p.click("#revoke");
+  await p.waitForFunction(() => document.getElementById("msg")!.textContent === "取り消せませんでした");
+  expect(await p.locator("tbody tr").count()).toBe(6);
+}, 30_000);
+
+test("offers no revoke button where nothing was granted", async () => {
+  const p = await openPopup("https://other.test/");
+  await p.waitForSelector("#grant:not([hidden])");
+  expect(await p.locator("#revoke").isHidden()).toBe(true);
 }, 30_000);
 
 // Last, so it sees the errors of every popup above.
