@@ -8,7 +8,10 @@ function attrs(c) {
   if (c.secure) a.push("Secure");
   if (c.httpOnly) a.push("HttpOnly");
   if (SAME_SITE[c.sameSite]) a.push("SameSite=" + SAME_SITE[c.sameSite]);
-  if (c.partitionKey) a.push("Partitioned(" + c.partitionKey.topLevelSite + ")");
+  if (c.partitionKey) {
+    const k = [c.partitionKey.topLevelSite, c.partitionKey.hasCrossSiteAncestor && "cross-site"].filter(Boolean);
+    a.push(k.length ? "Partitioned(" + k.join(", ") + ")" : "Partitioned");
+  }
   a.push(c.session ? "Session" : new Date(c.expirationDate * 1000).toLocaleString());
   return a.join(" ");
 }
@@ -50,6 +53,7 @@ function render() {
 async function load(url) {
   try {
     // partitionKey: {} で、パーティション無しに加えて全パーティションの Cookie (CHIPS) も返る。省くと前者だけになる。
+    // API リファレンスには書かれておらず、根拠は Chromium 119 の cookies_helpers.cc (topLevelSite が無ければ全件) と実測。
     cookies = await chrome.cookies.getAll({ url, partitionKey: {} });
   } catch (e) {
     $("msg").textContent = "読み込めませんでした: " + e.message;

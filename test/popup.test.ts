@@ -38,19 +38,26 @@ beforeAll(async () => {
       const url = decodeURIComponent(location.hash.slice(1));
       // @ts-ignore
       chrome.tabs.query = async () => [{ url }];
+      // Failure paths are reached by a query string on the target URL.
+      if (url.includes("fail=read")) chrome.cookies.getAll = (async () => { throw new Error("boom"); }) as never;
+      if (url.includes("fail=copy")) navigator.clipboard.writeText = async () => { throw new Error("denied"); };
+      if (url.includes("deny")) chrome.permissions.request = (async () => false) as never;
     }
   });
 
   // Cookies go straight into the store over CDP: a local http server cannot set Secure / Partitioned
   // cookies that Chrome then returns for an https URL. Created out of name order so the popup's sort is tested.
   const base = { domain: "example.test", path: "/", secure: true, sourceScheme: "Secure", sourcePort: 443 };
+  const part = (topLevelSite: string, hasCrossSiteAncestor: boolean) => ({ topLevelSite, hasCrossSiteAncestor });
   const cdp = await ctx.newCDPSession(await ctx.newPage());
   await cdp.send("Storage.setCookies", {
     cookies: [
-      { ...base, name: "xss", value: XSS },
+      { ...base, name: "xss", value: XSS, sameSite: "Lax" },
       { ...base, name: "sid", value: "secret123", httpOnly: true, sameSite: "Strict" },
-      { ...base, name: "Plain", value: "hello", expires: Date.now() / 1000 + 3600 },
-      { ...base, name: "chips", value: "part", sameSite: "None", partitionKey: { topLevelSite: SITE, hasCrossSiteAncestor: false } },
+      { ...base, name: "Plain", value: "hello", path: "/app", expires: Date.now() / 1000 + 3600 },
+      { ...base, name: "chips", value: "part", sameSite: "None", partitionKey: part(SITE, false) },
+      { ...base, name: "chips_cross", value: "x", sameSite: "None", partitionKey: part(SITE, true) },
+      { ...base, name: "chips_other", value: "o", sameSite: "None", partitionKey: part("https://other.test", false) },
     ],
   } as never);
 }, 60_000);
@@ -60,8 +67,11 @@ afterAll(async () => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
+const errors: string[] = [];
+
 async function openPopup(target: string) {
   const p = await ctx.newPage();
+  p.on("pageerror", (e) => errors.push(e.message));
   await p.goto(`chrome-extension://${extId}/popup.html#${encodeURIComponent(target)}`);
   return p;
 }
@@ -71,22 +81,27 @@ const rows = (p: Page) =>
 const row = async (p: Page, name: string) => (await rows(p)).find((r) => r[0] === name)!;
 const msg = (p: Page) => p.locator("#msg").textContent();
 
-async function openGranted() {
-  const p = await openPopup(`${SITE}/`);
-  await p.waitForFunction(() => document.getElementById("msg")!.textContent === "4 件");
+// /app makes Plain match too, so every seeded cookie is listed.
+async function openGranted(query = "") {
+  const p = await openPopup(`${SITE}/app${query}`);
+  await p.waitForFunction(() => document.getElementById("msg")!.textContent === "6 件");
   return p;
 }
 
 test("lists every cookie including partitioned ones, values masked until revealed", async () => {
   const p = await openGranted();
 
-  expect((await rows(p)).map((r) => r[0])).toEqual(["chips", "Plain", "sid", "xss"]);
+  expect((await rows(p)).map((r) => r[0])).toEqual(["chips", "chips_cross", "chips_other", "Plain", "sid", "xss"]);
   expect((await row(p, "sid"))[1]).toBe("••••••••");
   expect((await row(p, "Plain"))[1]).toBe("••••••••");
+  expect((await row(p, "sid"))[2]).toBe("example.test/");
+  expect((await row(p, "Plain"))[2]).toBe("example.test/app");
   expect((await row(p, "sid"))[3]).toBe("Secure HttpOnly SameSite=Strict Session");
+  expect((await row(p, "xss"))[3]).toBe("Secure SameSite=Lax Session");
   expect((await row(p, "chips"))[3]).toBe(`Secure SameSite=None Partitioned(${SITE}) Session`);
-  expect((await row(p, "Plain"))[3]).toStartWith("Secure ");
-  expect((await row(p, "Plain"))[3]).not.toContain("Session");
+  expect((await row(p, "chips_cross"))[3]).toBe(`Secure SameSite=None Partitioned(${SITE}, cross-site) Session`);
+  expect((await row(p, "chips_other"))[3]).toBe("Secure SameSite=None Partitioned(https://other.test) Session");
+  expect((await row(p, "Plain"))[3]).toMatch(/^Secure \d/);
   expect(await p.locator("#host").textContent()).toBe(SITE);
 
   await p.check("#reveal");
@@ -100,7 +115,7 @@ test("filters by name ignoring case and counts the matches", async () => {
   const p = await openGranted();
   await p.fill("#filter", "PLA");
   expect((await rows(p)).map((r) => r[0])).toEqual(["Plain"]);
-  expect(await msg(p)).toBe("1 / 4 件");
+  expect(await msg(p)).toBe("1 / 6 件");
 }, 30_000);
 
 test("copies the value, not the name, even while masked", async () => {
@@ -108,6 +123,18 @@ test("copies the value, not the name, even while masked", async () => {
   await p.getByRole("button", { name: "copy value of sid" }).click();
   await p.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent === "ok"));
   expect(await p.evaluate(() => navigator.clipboard.readText())).toBe("secret123");
+}, 30_000);
+
+test("says so when copying fails", async () => {
+  const p = await openGranted("?fail=copy");
+  await p.getByRole("button", { name: "copy value of sid" }).click();
+  await p.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent === "failed"));
+}, 30_000);
+
+test("says so when reading fails", async () => {
+  const p = await openPopup(`${SITE}/?fail=read`);
+  await p.waitForFunction(() => document.getElementById("msg")!.textContent === "読み込めませんでした: boom");
+  expect(await p.locator("#tbl").isHidden()).toBe(true);
 }, 30_000);
 
 test("asks for permission instead of reading a site that was not granted", async () => {
@@ -119,6 +146,13 @@ test("asks for permission instead of reading a site that was not granted", async
   expect(await msg(p)).toBe("");
 }, 30_000);
 
+test("says so when the permission is denied", async () => {
+  const p = await openPopup("https://other.test/?deny");
+  await p.click("#grant");
+  await p.waitForFunction(() => document.getElementById("msg")!.textContent === "許可されませんでした");
+  expect(await p.locator("#tbl").isHidden()).toBe(true);
+}, 30_000);
+
 test("refuses non-http pages, and keeps refusing after the controls are touched", async () => {
   const p = await openPopup("chrome://settings/");
   await p.waitForFunction(() => document.getElementById("msg")!.textContent!.includes("http / https"));
@@ -126,3 +160,8 @@ test("refuses non-http pages, and keeps refusing after the controls are touched"
   expect(await msg(p)).toBe("http / https のページでだけ使えます");
   expect(await p.locator("#tbl").isHidden()).toBe(true);
 }, 30_000);
+
+// Last, so it sees the errors of every popup above.
+test("no popup threw", () => {
+  expect(errors).toEqual([]);
+});
