@@ -50,9 +50,13 @@ beforeAll(async () => {
     // removed, so the permission calls are replaced according to the query string on the target URL.
     const q = new URL(url).searchParams;
     if (q.get("fail") === "read") chrome.cookies.getAll = (async () => { throw new Error("boom"); }) as never;
+    if (q.has("slow")) {
+      const getAll = chrome.cookies.getAll.bind(chrome.cookies);
+      chrome.cookies.getAll = (async (d: never) => { await new Promise((r) => setTimeout(r, 500)); return getAll(d); }) as never;
+    }
     if (q.get("fail") === "copy") navigator.clipboard.writeText = async () => { throw new Error("denied"); };
     if (q.has("grant")) {
-      chrome.permissions.contains = (async () => false) as never;
+      chrome.permissions.contains = (async (p: unknown) => ((w.__containsArgs ??= []).push(p), false)) as never;
       chrome.permissions.request = (async (p: unknown) => {
         if (q.get("grant") === "throw") throw new Error("no gesture");
         w.__requestCalls = (w.__requestCalls ?? 0) + 1;
@@ -65,7 +69,10 @@ beforeAll(async () => {
       const mode = q.get("revoke");
       let removed = false;
       const contains = chrome.permissions.contains.bind(chrome.permissions);
-      chrome.permissions.contains = (async (p: never) => (removed ? mode === "still" : contains(p))) as never;
+      chrome.permissions.contains = (async (p: never) => {
+        (w.__containsArgs ??= []).push(p);
+        return removed ? mode === "still" : contains(p);
+      }) as never;
       chrome.permissions.remove = (async (p: unknown) => {
         if (mode === "throw") throw new Error("not removable");
         w.__removeCalls = (w.__removeCalls ?? 0) + 1;
@@ -199,6 +206,7 @@ test("says so when the permission is denied", async () => {
   expect(await p.locator("#tbl").isHidden()).toBe(true);
   expect(await p.locator("#revoke").isHidden()).toBe(true);
   expect(await p.locator("#grant").isHidden()).toBe(false);
+  expect(await p.locator("#grant").isEnabled()).toBe(true);
 }, 30_000);
 
 test("says so when the permission request throws", async () => {
@@ -207,6 +215,7 @@ test("says so when the permission request throws", async () => {
   await waitMsg(p, "許可を求められませんでした: no gesture");
   expect(await p.locator("#tbl").isHidden()).toBe(true);
   expect(await p.locator("#revoke").isHidden()).toBe(true);
+  expect(await p.locator("#grant").isEnabled()).toBe(true);
 }, 30_000);
 
 test("after granting, revoking works and the grant button comes back", async () => {
@@ -218,6 +227,18 @@ test("after granting, revoking works and the grant button comes back", async () 
   expect(await p.evaluate(() => (window as any).__removed)).toEqual({ origins: [`${SITE}/*`] });
   expect(await p.locator("#tbl").isHidden()).toBe(true);
   expect(await p.locator("#grant").isHidden()).toBe(false);
+  // The grant button works again: the second request lists the site again.
+  await p.click("#grant");
+  await waitMsg(p, "6 件");
+  expect(await p.evaluate(() => (window as any).__requestCalls)).toBe(2);
+}, 30_000);
+
+test("the revoke button appears only after the list has loaded", async () => {
+  const p = await openPopup(`${SITE}/app?slow`);
+  await p.waitForTimeout(200);
+  expect(await p.locator("#revoke").isHidden()).toBe(true);
+  await waitMsg(p, "6 件");
+  expect(await p.locator("#revoke").isHidden()).toBe(false);
 }, 30_000);
 
 test("revokes the site's permission and clears the list", async () => {
@@ -241,7 +262,10 @@ test("does not claim to have revoked a site that a broader grant still covers", 
   expect(await p.locator("#tbl").isHidden()).toBe(false);
   expect(await p.locator("tbody tr").count()).toBe(6);
   expect(await p.locator("#revoke").isHidden()).toBe(false);
+  expect(await p.locator("#revoke").isEnabled()).toBe(true);
   expect(await p.locator("#grant").isHidden()).toBe(true);
+  // The check after removing asks about this origin, not something broader or empty.
+  expect((await p.evaluate(() => (window as any).__containsArgs)).at(-1)).toEqual({ origins: [`${SITE}/*`] });
 }, 30_000);
 
 test("says so when revoking fails or throws, and keeps the list", async () => {
@@ -251,6 +275,7 @@ test("says so when revoking fails or throws, and keeps the list", async () => {
     await waitMsg(p, text);
     expect(await p.locator("#tbl").isHidden()).toBe(false);
     expect(await p.locator("#revoke").isHidden()).toBe(false);
+    expect(await p.locator("#revoke").isEnabled()).toBe(true);
     expect(await p.locator("tbody tr").count()).toBe(6);
   }
 }, 30_000);
@@ -271,8 +296,11 @@ test("the CSP blocks requests, and a full session sends, opens and stores nothin
   ctx.on("request", onRequest);
   ctx.on("page", onPage);
 
-  const p = await openGranted();
+  // The list is slowed down so the clipboard is seeded before it loads; a write while listing would show too.
+  const p = await openPopup(`${SITE}/app?slow`);
   await p.evaluate(() => navigator.clipboard.writeText("before"));
+  expect(await msg(p)).toBe("");
+  await waitMsg(p, "6 件");
   await p.check("#reveal");
   await p.fill("#filter", "s");
   // Listing, revealing and filtering put nothing on the clipboard; only the copy button does.
@@ -346,6 +374,7 @@ test("popup.js uses nothing outside the allowlist", async () => {
   const computed: string[] = [];
   const attrs: string[] = [];
   const clipboard: string[] = [];
+  const tags: string[] = [];
   fullAncestor(ast, (n: any, _state: unknown, ancestors: any[]) => {
     const parent = ancestors[ancestors.length - 2];
     if (n.type === "Identifier") {
@@ -375,6 +404,9 @@ test("popup.js uses nothing outside the allowlist", async () => {
         attrs.push(n.arguments[0]?.type === "Literal" ? n.arguments[0].value : "<not a literal>");
       }
       if (n.callee.property.name === "writeText") clipboard.push(src.slice(n.start, n.end));
+      if (n.callee.property.name === "createElement") {
+        tags.push(n.arguments[0]?.type === "Literal" ? n.arguments[0].value : "<not a literal>");
+      }
     }
   });
 
@@ -394,6 +426,8 @@ test("popup.js uses nothing outside the allowlist", async () => {
     "setAttribute", "sort", "tabs", "test", "textContent", "then", "toLocaleString", "toLowerCase", "topLevelSite",
     "url", "value", "writeText"]);
   expect(attrs).toEqual(["aria-label"]);
+  // A created element is inert only because it is a button; an img, iframe, script or style could load or run.
+  expect(tags).toEqual(["button"]);
   const allowedSyntax = ["ArrayExpression", "ArrayPattern", "ArrowFunctionExpression", "AssignmentExpression",
     "AwaitExpression", "BinaryExpression", "BlockStatement", "CallExpression", "CatchClause", "ConditionalExpression",
     "ExpressionStatement", "ForOfStatement", "FunctionDeclaration", "Identifier", "IfStatement", "Literal",
@@ -403,14 +437,18 @@ test("popup.js uses nothing outside the allowlist", async () => {
 
   // The global check above trusts that a local name is really local. A local named like a browser global
   // (`const fetch = ...` in one function) would hide a real use of that global elsewhere, so none may exist.
-  // Taken from a blank page: popup.js would add its own top-level functions to window.
+  // Taken from an extension page that does not run popup.js (popup.js would add its own top-level functions
+  // to window). It has to be the extension's origin: about:blank is not a secure context and lacks globals
+  // such as caches and cookieStore.
   const p = await ctx.newPage();
+  await p.goto(`chrome-extension://${extId}/popup.css`);
   const windowNames = await p.evaluate(() => {
     const names = new Set<string>();
     for (let o: object | null = window; o; o = Object.getPrototypeOf(o)) Object.getOwnPropertyNames(o).forEach((k) => names.add(k));
     return [...names];
   });
   expect(windowNames).toContain("fetch");
+  expect(windowNames).toContain("cookieStore");
   expect([...declared].filter((d) => windowNames.includes(d))).toEqual([]);
   await p.close();
 }, 30_000);
