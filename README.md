@@ -1,4 +1,4 @@
-# cookie-viewer
+# secure-cookie-viewer
 
 A minimal, read-only cookie viewer for Chrome.
 
@@ -37,7 +37,7 @@ bun test
 The tests load the extension into Playwright's Chromium, put cookies into its store and check the popup, including that cookie values are never interpreted as HTML. The permission prompt and the toolbar click itself are not covered, since a test cannot answer the prompt or click the toolbar.
 
 ```bash
-bun run zip   # builds cookie-viewer.zip from extension/ for the Chrome Web Store
+bun run zip   # builds secure-cookie-viewer.zip from extension/ for the Chrome Web Store
 ```
 
 ## License
