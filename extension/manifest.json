@@ -5,6 +5,9 @@
   "description": "Read-only cookie viewer for the current tab. No network, no storage.",
   "minimum_chrome_version": "119",
   "incognito": "split",
+  "content_security_policy": {
+    "extension_pages": "default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+  },
   "permissions": [
     "cookies",
     "activeTab"

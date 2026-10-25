@@ -1,13 +1,19 @@
 // Cookie の値は信頼できない入力なので、DOM には textContent でだけ入れる (innerHTML は使わない)。
 const $ = (id) => document.getElementById(id);
-const SAME_SITE = { lax: "Lax", strict: "Strict", no_restriction: "None" };
+// chrome.cookies の sameSite の値を、Set-Cookie の属性の書き方にする。
+function sameSiteAttr(v) {
+  if (v === "lax") return "Lax";
+  if (v === "strict") return "Strict";
+  if (v === "no_restriction") return "None";
+  return "";
+}
 let cookies = null;
 
 function attrs(c) {
   const a = [];
   if (c.secure) a.push("Secure");
   if (c.httpOnly) a.push("HttpOnly");
-  if (SAME_SITE[c.sameSite]) a.push("SameSite=" + SAME_SITE[c.sameSite]);
+  if (sameSiteAttr(c.sameSite)) a.push("SameSite=" + sameSiteAttr(c.sameSite));
   if (c.partitionKey) {
     const k = [c.partitionKey.topLevelSite, c.partitionKey.hasCrossSiteAncestor && "cross-site"].filter(Boolean);
     a.push(k.length ? "Partitioned(" + k.join(", ") + ")" : "Partitioned");
@@ -28,7 +34,7 @@ function render() {
   const q = $("filter").value.toLowerCase();
   const reveal = $("reveal").checked;
   const shown = cookies.filter((c) => c.name.toLowerCase().includes(q));
-  const tbody = $("tbl").tBodies[0];
+  const tbody = $("rows");
   tbody.replaceChildren();
   for (const c of shown) {
     const tr = tbody.insertRow();
@@ -63,6 +69,64 @@ async function load(url) {
   render();
 }
 
+function offerRevoke(url, origins) {
+  $("revoke").hidden = false;
+  $("revoke").onclick = async () => {
+    $("revoke").disabled = true;
+    try {
+      if (!(await chrome.permissions.remove({ origins }))) {
+        $("msg").textContent = "取り消せませんでした";
+        return;
+      }
+      // remove は一致するパターンしか外さないので、「すべてのサイト」などで許可されていると読める状態が残る。
+      if (await chrome.permissions.contains({ origins })) {
+        $("msg").textContent = "このサイトは chrome://extensions の「サイトへのアクセス」で許可されているため、ここでは取り消せません";
+        return;
+      }
+    } catch (e) {
+      $("msg").textContent = "取り消せませんでした: " + e.message;
+      return;
+    } finally {
+      $("revoke").disabled = false;
+    }
+    cookies = null;
+    $("tbl").hidden = true;
+    $("rows").replaceChildren();
+    $("revoke").hidden = true;
+    $("msg").textContent = "許可を取り消しました";
+    askGrant(url, origins);
+  };
+}
+
+function askGrant(url, origins) {
+  $("grant").hidden = false;
+  $("grant").onclick = async () => {
+    $("grant").disabled = true;
+    let granted;
+    try {
+      granted = await chrome.permissions.request({ origins });
+    } catch (e) {
+      $("msg").textContent = "許可を求められませんでした: " + e.message;
+      return;
+    } finally {
+      $("grant").disabled = false;
+    }
+    if (!granted) {
+      $("msg").textContent = "許可されませんでした";
+      return;
+    }
+    $("grant").hidden = true;
+    await showGranted(url, origins);
+  };
+}
+
+// 取り消しボタンは読み込みが終わってから出す。先に出すと、取り消した後に読み込みが終わって一覧が戻る。
+// 読み込みに失敗しても許可は残っているので、取り消しは出す。
+async function showGranted(url, origins) {
+  await load(url);
+  offerRevoke(url, origins);
+}
+
 (async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const url = tab && tab.url;
@@ -70,21 +134,12 @@ async function load(url) {
     $("msg").textContent = "http / https のページでだけ使えます";
     return;
   }
-  const origin = new URL(url).origin;
-  $("host").textContent = origin;
-  const origins = [origin + "/*"];
+  const siteOrigin = new URL(url).origin;
+  $("host").textContent = siteOrigin;
+  const origins = [siteOrigin + "/*"];
 
-  if (await chrome.permissions.contains({ origins })) return load(url);
-
-  $("grant").hidden = false;
-  $("grant").onclick = async () => {
-    if (await chrome.permissions.request({ origins })) {
-      $("grant").hidden = true;
-      load(url);
-    } else {
-      $("msg").textContent = "許可されませんでした";
-    }
-  };
+  if (await chrome.permissions.contains({ origins })) await showGranted(url, origins);
+  else askGrant(url, origins);
 })();
 
 $("filter").oninput = render;
