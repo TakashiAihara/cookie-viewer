@@ -3,6 +3,8 @@
   "name": "Cookie Viewer",
   "version": "0.1.0",
   "description": "Read-only cookie viewer for the current tab. No network, no storage.",
+  "minimum_chrome_version": "119",
+  "incognito": "split",
   "permissions": [
     "cookies",
     "activeTab"

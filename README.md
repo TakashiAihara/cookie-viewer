@@ -2,11 +2,13 @@
 
 A minimal, read-only cookie viewer for Chrome.
 
-It shows the cookies that the current tab's URL would send, and nothing else. It is meant for people who handle sensitive sessions and would rather not trust a large third-party extension with them: the whole extension is about 100 lines you can read in a few minutes.
+It shows the cookies stored for the current tab's URL, and nothing else. It is meant for people who handle sensitive sessions and would rather not trust a large third-party extension with them: the whole extension is small enough to read in a few minutes and has no dependencies.
 
 ## What it does
 
-- Lists name / value / domain + path / attributes (Secure, HttpOnly, SameSite, Partitioned, expiry) of the cookies for the current tab's URL
+- Lists name / value / domain + path / attributes (Secure, HttpOnly, SameSite, expiry) of the cookies for the current tab's URL
+- Partitioned cookies (CHIPS) are listed too, labeled with the top-level site they belong to. Cookies this site set while embedded in other sites appear here, although this tab does not send them
+- In an incognito window (if you allow the extension there) it shows the incognito cookies, not the regular profile's
 - Values are masked until you tick "値を表示" (show values), so they do not leak on a shared screen
 - Filter by name, copy a value to the clipboard
 
@@ -32,7 +34,7 @@ bunx playwright install chromium
 bun test
 ```
 
-The tests load the extension into Playwright's Chromium and check the cookie list against a local server, including that cookie values are never interpreted as HTML.
+The tests load the extension into Playwright's Chromium, put cookies into its store and check the popup, including that cookie values are never interpreted as HTML. The permission prompt and the toolbar click itself are not covered, since a test cannot answer the prompt or click the toolbar.
 
 ```bash
 bun run zip   # builds cookie-viewer.zip from extension/ for the Chrome Web Store
