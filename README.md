@@ -20,11 +20,13 @@ These hold whatever the code does, because Chrome refuses the rest.
 
 A CSP does not cover everything. Navigation, opening a tab (`window.open`, `chrome.tabs.create`), WebRTC and some `chrome.*` APIs can still send data out of an extension page, and `activeTab` would let the popup capture the visible tab. This extension relies on not containing any of that, and the tests check it:
 
-- A static test fails if the popup code uses any of: navigation or `window.open`, `chrome.tabs.create` / `update`, `chrome.windows`, `RTCPeerConnection`, WebSocket, `sendBeacon`, `fetch`, XHR, `eval`, HTML-writing APIs, or any storage API. It also fails if `popup.html` has links, forms, frames, images or inline handlers, and if the manifest gains a key or permission
+- An allowlist test parses `popup.js` and fails on anything it does not already use: the globals are exactly `chrome`, `document`, `navigator`, `URL`, `Date` and `Boolean`; the `chrome.*` calls are exactly `cookies.getAll`, `permissions.contains` / `request` / `remove` and `tabs.query`; every property name, every kind of syntax and the only `setAttribute` name (`aria-label`) are listed too. Bracket access, which could build a name from strings, is allowed in two fixed places only, and no local name may hide a browser global. So `window.open`, `open(...)`, `chrome.tabs.create`, `captureVisibleTab`, navigation, `fetch`, WebRTC, `eval`, `import()` and storage APIs all fail the test, however they are written
+- The package's file list, `popup.html` (one stylesheet, one script, no links, forms, frames, images or inline handlers) and the whole manifest (keys, permissions, host patterns, CSP) are pinned as well
 - A browser test runs a full session (list, reveal, filter, copy) and checks that no request leaves the extension, no tab or window opens, nothing lands in `localStorage`, `sessionStorage`, IndexedDB or the Cache API, and nothing trips the CSP. It then checks that a request is blocked by the CSP
 - Cookie values reach the page only through `textContent`; a test feeds a value containing HTML
-- `activeTab` is used only to read the tab's URL
-- No third-party code: the package is plain HTML, CSS and JavaScript with no dependencies. `playwright` is used only by the tests and is not in the package
+- No third-party code: the package is plain HTML, CSS and JavaScript with no dependencies. `playwright`, `acorn` and `acorn-walk` are used only by the tests and are not in the package
+
+These tests stop a mistake in this repository from shipping. They are not a guarantee about a build you install: a malicious update would ship with its own tests. For that, see the release checks below, or read `popup.js` (about 130 lines) yourself.
 
 ### Releases
 

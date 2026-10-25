@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { parse } from "acorn";
+import { fullAncestor } from "acorn-walk";
 import { chromium, type BrowserContext, type Page } from "playwright";
 
 const XSS = "<img src=x onerror=document.title='pwned'>";
@@ -298,21 +300,99 @@ test("the CSP blocks requests, and a full session sends, opens and stores nothin
 }, 30_000);
 
 // CSP covers requests a page makes, not navigation, new tabs, WebRTC or chrome.* APIs. Those are kept out
-// by not having the code at all, and this pins that.
-test("the package contains no way out that the CSP does not cover", () => {
+// by the code not containing them. This test pins everything popup.js touches to an allowlist, so any new
+// global, chrome.* API, DOM property or syntax fails here until it is added on purpose.
+test("popup.js uses nothing outside the allowlist", async () => {
   const dir = resolve(import.meta.dir, "../extension");
-  // Comments name some of these APIs to say they are not used, so only code is scanned.
-  const js = readFileSync(join(dir, "popup.js"), "utf8").replace(/\/\/.*$/gm, "");
+  const src = readFileSync(join(dir, "popup.js"), "utf8");
+  const ast = parse(src, { ecmaVersion: "latest", sourceType: "script" }) as any;
+
+  const declared = new Set<string>();
+  const declare = (p: any): void => {
+    if (!p) return;
+    if (p.type === "Identifier") declared.add(p.name);
+    else if (p.type === "ArrayPattern") p.elements.forEach(declare);
+    else if (p.type === "ObjectPattern") p.properties.forEach((q: any) => declare(q.value ?? q.argument));
+    else if (p.type === "AssignmentPattern") declare(p.left);
+    else if (p.type === "RestElement") declare(p.argument);
+  };
+  const types = new Set<string>();
+  fullAncestor(ast, (n: any) => {
+    types.add(n.type);
+    if (n.type === "VariableDeclarator") declare(n.id);
+    if (/Function/.test(n.type)) {
+      if (n.id) declare(n.id);
+      n.params.forEach(declare);
+    }
+    if (n.type === "CatchClause") declare(n.param);
+  });
+
+  const globals = new Set<string>();
+  const props = new Set<string>();
+  const chromeApis = new Set<string>();
+  const computed: string[] = [];
+  const attrs: string[] = [];
+  const dotted = (m: any): string | null =>
+    m.type === "Identifier" ? m.name : m.type === "MemberExpression" && !m.computed && dotted(m.object) ? `${dotted(m.object)}.${m.property.name}` : null;
+  fullAncestor(ast, (n: any, _state: unknown, ancestors: any[]) => {
+    const parent = ancestors[ancestors.length - 2];
+    if (n.type === "Identifier") {
+      if (parent?.type === "MemberExpression" && parent.property === n && !parent.computed) return;
+      if (parent?.type === "Property" && parent.key === n && !parent.computed) return;
+      if (!declared.has(n.name)) globals.add(n.name);
+    }
+    if (n.type === "MemberExpression") {
+      if (n.computed) computed.push(src.slice(n.start, n.end));
+      else props.add(n.property.name);
+      const path = dotted(n);
+      if (path?.startsWith("chrome.") && !(parent?.type === "MemberExpression" && parent.object === n)) chromeApis.add(path);
+    }
+    if (n.type === "CallExpression" && n.callee.type === "MemberExpression" && n.callee.property.name === "setAttribute") {
+      attrs.push(n.arguments[0]?.type === "Literal" ? n.arguments[0].value : "<not a literal>");
+    }
+  });
+
+  expect([...globals].sort()).toEqual(["Boolean", "Date", "URL", "chrome", "document", "navigator"]);
+  expect([...chromeApis].sort()).toEqual(["chrome.cookies.getAll", "chrome.permissions.contains",
+    "chrome.permissions.remove", "chrome.permissions.request", "chrome.tabs.query"]);
+  expect([...props].sort()).toEqual(["append", "checked", "className", "clipboard", "contains", "cookies",
+    "createElement", "domain", "expirationDate", "filter", "getAll", "getElementById", "hasCrossSiteAncestor",
+    "hidden", "httpOnly", "includes", "insertCell", "insertRow", "join", "length", "localeCompare", "message",
+    "name", "onchange", "onclick", "oninput", "origin", "partitionKey", "path", "permissions", "push", "query",
+    "remove", "replaceChildren", "request", "sameSite", "secure", "session", "setAttribute", "sort", "tBodies",
+    "tabs", "test", "textContent", "then", "toLocaleString", "toLowerCase", "topLevelSite", "url", "value",
+    "writeText"]);
+  // Bracket access could build any name from strings, so only these two are allowed.
+  expect([...new Set(computed)].sort()).toEqual(['$("tbl").tBodies[0]', "SAME_SITE[c.sameSite]"]);
+  expect(attrs).toEqual(["aria-label"]);
+  const allowedSyntax = ["ArrayExpression", "ArrayPattern", "ArrowFunctionExpression", "AssignmentExpression",
+    "AwaitExpression", "BinaryExpression", "BlockStatement", "CallExpression", "CatchClause", "ConditionalExpression",
+    "ExpressionStatement", "ForOfStatement", "FunctionDeclaration", "Identifier", "IfStatement", "Literal",
+    "LogicalExpression", "MemberExpression", "NewExpression", "ObjectExpression", "Program", "Property",
+    "ReturnStatement", "TryStatement", "UnaryExpression", "VariableDeclaration", "VariableDeclarator"];
+  expect([...types].filter((t) => !allowedSyntax.includes(t))).toEqual([]);
+
+  // The global check above trusts that a local name is really local. A local named like a browser global
+  // (`const fetch = ...` in one function) would hide a real use of that global elsewhere, so none may exist.
+  // Taken from a blank page: popup.js would add its own top-level functions to window.
+  const p = await ctx.newPage();
+  const windowNames = await p.evaluate(() => {
+    const names = new Set<string>();
+    for (let o: object | null = window; o; o = Object.getPrototypeOf(o)) Object.getOwnPropertyNames(o).forEach((k) => names.add(k));
+    return [...names];
+  });
+  expect(windowNames).toContain("fetch");
+  expect([...declared].filter((d) => windowNames.includes(d))).toEqual([]);
+  await p.close();
+}, 30_000);
+
+test("the package files, page and manifest are exactly what is reviewed", () => {
+  const dir = resolve(import.meta.dir, "../extension");
   const html = readFileSync(join(dir, "popup.html"), "utf8");
   const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
 
-  for (const re of [/window\.open/, /\blocation\b/, /\.href\b/, /chrome\.tabs\.(create|update)/, /chrome\.windows/,
-    /chrome\.runtime\.(setUninstallURL|sendMessage|connect)/, /RTCPeerConnection/, /\bWebSocket\b/, /sendBeacon/,
-    /\bfetch\b/, /XMLHttpRequest/, /\beval\b|new Function/, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/,
-    /localStorage|sessionStorage|indexedDB|chrome\.storage/]) {
-    expect(js).not.toMatch(re);
-  }
   expect(html).not.toMatch(/<(a|form|iframe|img|object|embed|meta http-equiv)\b|style=|on[a-z]+=/i);
+  expect([...html.matchAll(/<(script|link)\b[^>]*>/g)].map((m) => m[0])).toEqual(['<link rel="stylesheet" href="popup.css">', '<script src="popup.js">']);
   expect(Object.keys(manifest).sort()).toEqual(["action", "content_security_policy", "description", "icons",
     "incognito", "manifest_version", "minimum_chrome_version", "name", "optional_host_permissions", "permissions",
     "version"]);
@@ -321,12 +401,11 @@ test("the package contains no way out that the CSP does not cover", () => {
   expect(manifest.content_security_policy).toEqual({
     extension_pages: "default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   });
-  // A new file in the package, or a second script, would escape this scan.
+  // A new file in the package, or a second script, would escape the allowlist above.
   const files = new Bun.Glob("**/*").scanSync({ cwd: dir, dot: true });
   expect([...files].sort()).toEqual(["icons/icon128.png", "icons/icon16.png", "icons/icon32.png", "icons/icon48.png",
     "manifest.json", "popup.css", "popup.html", "popup.js"]);
-  expect([...html.matchAll(/<script\b[^>]*>/g)].map((m) => m[0])).toEqual(['<script src="popup.js">']);
-}, 30_000);
+});
 
 // Last, so it sees the errors of every popup above.
 test("no popup threw", () => {

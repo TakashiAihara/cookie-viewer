@@ -121,9 +121,9 @@ async function showGranted(url, origins) {
     $("msg").textContent = "http / https のページでだけ使えます";
     return;
   }
-  const origin = new URL(url).origin;
-  $("host").textContent = origin;
-  const origins = [origin + "/*"];
+  const siteOrigin = new URL(url).origin;
+  $("host").textContent = siteOrigin;
+  const origins = [siteOrigin + "/*"];
 
   if (await chrome.permissions.contains({ origins })) await showGranted(url, origins);
   else askGrant(url, origins);
