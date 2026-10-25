@@ -1,6 +1,6 @@
-// Cookie の値は信頼できない入力なので、DOM には textContent でだけ入れる (innerHTML は使わない)。
+// Cookie values are untrusted input, so they reach the DOM only through textContent (never innerHTML).
 const $ = (id) => document.getElementById(id);
-// chrome.cookies の sameSite の値を、Set-Cookie の属性の書き方にする。
+// Turns the chrome.cookies sameSite value into the attribute as written in Set-Cookie.
 function sameSiteAttr(v) {
   if (v === "lax") return "Lax";
   if (v === "strict") return "Strict";
@@ -53,16 +53,17 @@ function render() {
     tr.insertCell().append(btn);
   }
   $("tbl").hidden = false;
-  $("msg").textContent = (q ? shown.length + " / " : "") + cookies.length + " 件";
+  $("msg").textContent = "Cookies: " + (q ? shown.length + " / " : "") + cookies.length;
 }
 
 async function load(url) {
   try {
-    // partitionKey: {} で、パーティション無しに加えて全パーティションの Cookie (CHIPS) も返る。省くと前者だけになる。
-    // API リファレンスには書かれておらず、根拠は Chromium 119 の cookies_helpers.cc (topLevelSite が無ければ全件) と実測。
+    // partitionKey: {} returns partitioned cookies (CHIPS) from every partition as well as unpartitioned ones;
+    // without it only the latter come back. The API reference does not say so: the basis is Chromium 119's
+    // cookies_helpers.cc (no topLevelSite means all partitions) and a measurement.
     cookies = await chrome.cookies.getAll({ url, partitionKey: {} });
   } catch (e) {
-    $("msg").textContent = "読み込めませんでした: " + e.message;
+    $("msg").textContent = "Could not read cookies: " + e.message;
     return;
   }
   cookies.sort((a, b) => a.name.localeCompare(b.name));
@@ -75,16 +76,16 @@ function offerRevoke(url, origins) {
     $("revoke").disabled = true;
     try {
       if (!(await chrome.permissions.remove({ origins }))) {
-        $("msg").textContent = "取り消せませんでした";
+        $("msg").textContent = "Could not revoke access";
         return;
       }
-      // remove は一致するパターンしか外さないので、「すべてのサイト」などで許可されていると読める状態が残る。
+      // remove only drops the exact pattern, so a broader grant (such as "On all sites") still allows reading.
       if (await chrome.permissions.contains({ origins })) {
-        $("msg").textContent = "このサイトは chrome://extensions の「サイトへのアクセス」で許可されているため、ここでは取り消せません";
+        $("msg").textContent = "This site is still allowed by \"Site access\" in chrome://extensions, so it cannot be revoked here";
         return;
       }
     } catch (e) {
-      $("msg").textContent = "取り消せませんでした: " + e.message;
+      $("msg").textContent = "Could not revoke access: " + e.message;
       return;
     } finally {
       $("revoke").disabled = false;
@@ -93,7 +94,7 @@ function offerRevoke(url, origins) {
     $("tbl").hidden = true;
     $("rows").replaceChildren();
     $("revoke").hidden = true;
-    $("msg").textContent = "許可を取り消しました";
+    $("msg").textContent = "Access revoked";
     askGrant(url, origins);
   };
 }
@@ -106,13 +107,13 @@ function askGrant(url, origins) {
     try {
       granted = await chrome.permissions.request({ origins });
     } catch (e) {
-      $("msg").textContent = "許可を求められませんでした: " + e.message;
+      $("msg").textContent = "Could not ask for access: " + e.message;
       return;
     } finally {
       $("grant").disabled = false;
     }
     if (!granted) {
-      $("msg").textContent = "許可されませんでした";
+      $("msg").textContent = "Access was not granted";
       return;
     }
     $("grant").hidden = true;
@@ -120,8 +121,8 @@ function askGrant(url, origins) {
   };
 }
 
-// 取り消しボタンは読み込みが終わってから出す。先に出すと、取り消した後に読み込みが終わって一覧が戻る。
-// 読み込みに失敗しても許可は残っているので、取り消しは出す。
+// The revoke button appears only once the list has loaded; shown earlier, a load finishing after a revoke
+// would bring the list back. It appears even if loading failed, because the site is still granted.
 async function showGranted(url, origins) {
   await load(url);
   offerRevoke(url, origins);
@@ -131,7 +132,7 @@ async function showGranted(url, origins) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const url = tab && tab.url;
   if (!url || !/^https?:/.test(url)) {
-    $("msg").textContent = "http / https のページでだけ使えます";
+    $("msg").textContent = "Works only on http / https pages";
     return;
   }
   const siteOrigin = new URL(url).origin;

@@ -125,7 +125,7 @@ const waitMsg = (p: Page, text: string) =>
 // /app makes Plain match too, so every seeded cookie is listed.
 async function openGranted(query = "") {
   const p = await openPopup(`${SITE}/app${query}`);
-  await waitMsg(p, "6 件");
+  await waitMsg(p, "Cookies: 6");
   return p;
 }
 
@@ -156,7 +156,7 @@ test("filters by name ignoring case and counts the matches", async () => {
   const p = await openGranted();
   await p.fill("#filter", "PLA");
   expect((await rows(p)).map((r) => r[0])).toEqual(["Plain"]);
-  expect(await msg(p)).toBe("1 / 6 件");
+  expect(await msg(p)).toBe("Cookies: 1 / 6");
 }, 30_000);
 
 test("copies the value, not the name, even while masked", async () => {
@@ -174,7 +174,7 @@ test("says so when copying fails", async () => {
 
 test("says so when reading fails", async () => {
   const p = await openPopup(`${SITE}/?fail=read`);
-  await waitMsg(p, "読み込めませんでした: boom");
+  await waitMsg(p, "Could not read cookies: boom");
   expect(await p.locator("#tbl").isHidden()).toBe(true);
   // The site is still granted, so it can still be revoked.
   expect(await p.locator("#revoke").isHidden()).toBe(false);
@@ -193,7 +193,7 @@ test("asks for permission instead of reading a site that was not granted", async
 test("asks for exactly the current origin, then lists it and offers to revoke", async () => {
   const p = await openPopup(`${SITE}/app?grant`);
   await p.click("#grant");
-  await waitMsg(p, "6 件");
+  await waitMsg(p, "Cookies: 6");
   expect(await p.evaluate(() => (window as any).__requested)).toEqual({ origins: [`${SITE}/*`] });
   expect(await p.locator("#grant").isHidden()).toBe(true);
   expect(await p.locator("#revoke").isHidden()).toBe(false);
@@ -202,7 +202,7 @@ test("asks for exactly the current origin, then lists it and offers to revoke", 
 test("says so when the permission is denied", async () => {
   const p = await openPopup(`${SITE}/?grant=deny`);
   await p.click("#grant");
-  await waitMsg(p, "許可されませんでした");
+  await waitMsg(p, "Access was not granted");
   expect(await p.locator("#tbl").isHidden()).toBe(true);
   expect(await p.locator("#revoke").isHidden()).toBe(true);
   expect(await p.locator("#grant").isHidden()).toBe(false);
@@ -212,7 +212,7 @@ test("says so when the permission is denied", async () => {
 test("says so when the permission request throws", async () => {
   const p = await openPopup(`${SITE}/?grant=throw`);
   await p.click("#grant");
-  await waitMsg(p, "許可を求められませんでした: no gesture");
+  await waitMsg(p, "Could not ask for access: no gesture");
   expect(await p.locator("#tbl").isHidden()).toBe(true);
   expect(await p.locator("#revoke").isHidden()).toBe(true);
   expect(await p.locator("#grant").isEnabled()).toBe(true);
@@ -221,15 +221,15 @@ test("says so when the permission request throws", async () => {
 test("after granting, revoking works and the grant button comes back", async () => {
   const p = await openPopup(`${SITE}/app?grant&revoke`);
   await p.click("#grant");
-  await waitMsg(p, "6 件");
+  await waitMsg(p, "Cookies: 6");
   await p.click("#revoke");
-  await waitMsg(p, "許可を取り消しました");
+  await waitMsg(p, "Access revoked");
   expect(await p.evaluate(() => (window as any).__removed)).toEqual({ origins: [`${SITE}/*`] });
   expect(await p.locator("#tbl").isHidden()).toBe(true);
   expect(await p.locator("#grant").isHidden()).toBe(false);
   // The grant button works again: the second request lists the site again.
   await p.click("#grant");
-  await waitMsg(p, "6 件");
+  await waitMsg(p, "Cookies: 6");
   expect(await p.evaluate(() => (window as any).__requestCalls)).toBe(2);
 }, 30_000);
 
@@ -237,7 +237,7 @@ test("the revoke button appears only after the list has loaded", async () => {
   const p = await openPopup(`${SITE}/app?slow`);
   await p.waitForTimeout(200);
   expect(await p.locator("#revoke").isHidden()).toBe(true);
-  await waitMsg(p, "6 件");
+  await waitMsg(p, "Cookies: 6");
   expect(await p.locator("#revoke").isHidden()).toBe(false);
 }, 30_000);
 
@@ -245,7 +245,7 @@ test("revokes the site's permission and clears the list", async () => {
   const p = await openGranted("?revoke");
   expect(await p.locator("#revoke").isHidden()).toBe(false);
   await p.click("#revoke");
-  await waitMsg(p, "許可を取り消しました");
+  await waitMsg(p, "Access revoked");
   expect(await p.evaluate(() => (window as any).__removed)).toEqual({ origins: [`${SITE}/*`] });
   expect(await p.locator("#tbl").isHidden()).toBe(true);
   expect(await p.locator("tbody tr").count()).toBe(0);
@@ -258,7 +258,7 @@ test("revokes the site's permission and clears the list", async () => {
 test("does not claim to have revoked a site that a broader grant still covers", async () => {
   const p = await openGranted("?revoke=still");
   await p.click("#revoke");
-  await waitMsg(p, "このサイトは chrome://extensions の「サイトへのアクセス」で許可されているため、ここでは取り消せません");
+  await waitMsg(p, 'This site is still allowed by "Site access" in chrome://extensions, so it cannot be revoked here');
   expect(await p.locator("#tbl").isHidden()).toBe(false);
   expect(await p.locator("tbody tr").count()).toBe(6);
   expect(await p.locator("#revoke").isHidden()).toBe(false);
@@ -269,7 +269,7 @@ test("does not claim to have revoked a site that a broader grant still covers", 
 }, 30_000);
 
 test("says so when revoking fails or throws, and keeps the list", async () => {
-  for (const [mode, text] of [["fail", "取り消せませんでした"], ["throw", "取り消せませんでした: not removable"]]) {
+  for (const [mode, text] of [["fail", "Could not revoke access"], ["throw", "Could not revoke access: not removable"]]) {
     const p = await openGranted(`?revoke=${mode}`);
     await p.click("#revoke");
     await waitMsg(p, text);
@@ -284,7 +284,7 @@ test("refuses non-http pages, and keeps refusing after the controls are touched"
   const p = await openPopup("chrome://settings/");
   await p.waitForFunction(() => document.getElementById("msg")!.textContent!.includes("http / https"));
   await p.fill("#filter", "x");
-  expect(await msg(p)).toBe("http / https のページでだけ使えます");
+  expect(await msg(p)).toBe("Works only on http / https pages");
   expect(await p.locator("#tbl").isHidden()).toBe(true);
 }, 30_000);
 
@@ -300,7 +300,7 @@ test("the CSP blocks requests, and a full session sends, opens and stores nothin
   const p = await openPopup(`${SITE}/app?slow`);
   await p.evaluate(() => navigator.clipboard.writeText("before"));
   expect(await msg(p)).toBe("");
-  await waitMsg(p, "6 件");
+  await waitMsg(p, "Cookies: 6");
   await p.check("#reveal");
   await p.fill("#filter", "s");
   // Listing, revealing and filtering put nothing on the clipboard; only the copy button does.
@@ -455,7 +455,7 @@ test("popup.js uses nothing outside the allowlist", async () => {
 
 // popup.html is pinned whole: any new element, attribute or script must be added here on purpose.
 const POPUP_HTML = `<!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <link rel="stylesheet" href="popup.css">
@@ -463,17 +463,17 @@ const POPUP_HTML = `<!doctype html>
 <body>
 <div id="host" class="muted"></div>
 <div id="bar">
-  <input id="filter" placeholder="名前で絞り込み">
-  <label><input type="checkbox" id="reveal"> 値を表示</label>
+  <input id="filter" placeholder="Filter by name">
+  <label><input type="checkbox" id="reveal"> Show values</label>
 </div>
-<button id="grant" hidden>このサイトの Cookie を読む許可を出す</button>
+<button id="grant" hidden>Allow reading this site's cookies</button>
 <div id="msg" class="muted"></div>
 <table hidden id="tbl">
   <colgroup><col><col><col><col><col></colgroup>
-  <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>属性 / 期限</th><th>Copy</th></tr></thead>
+  <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>Attributes / Expires</th><th>Copy</th></tr></thead>
   <tbody id="rows"></tbody>
 </table>
-<button id="revoke" hidden>このサイトの許可を取り消す</button>
+<button id="revoke" hidden>Revoke access to this site</button>
 <script src="popup.js"></script>
 </body>
 </html>
@@ -502,10 +502,10 @@ test("the package files, page and manifest are exactly what is reviewed", () => 
 test("a double click asks for the permission once and revokes once", async () => {
   const p = await openPopup(`${SITE}/app?grant&revoke`);
   await p.dblclick("#grant");
-  await waitMsg(p, "6 件");
+  await waitMsg(p, "Cookies: 6");
   expect(await p.evaluate(() => (window as any).__requestCalls)).toBe(1);
   await p.dblclick("#revoke");
-  await waitMsg(p, "許可を取り消しました");
+  await waitMsg(p, "Access revoked");
   expect(await p.evaluate(() => (window as any).__removeCalls)).toBe(1);
 }, 30_000);
 
