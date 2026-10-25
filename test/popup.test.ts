@@ -10,7 +10,7 @@ const SITE = "https://example.test";
 let ctx: BrowserContext;
 let extId: string;
 // Chrome hashes the resolved path, so a symlinked TMPDIR (macOS) must be resolved first.
-const tmp = realpathSync(mkdtempSync(join(tmpdir(), "cookie-viewer-test-")));
+const tmp = realpathSync(mkdtempSync(join(tmpdir(), "secure-cookie-viewer-test-")));
 
 // Unpacked extension id on Linux / macOS: sha256 of the UTF-8 path, hex mapped to a-p.
 function unpackedId(path: string) {
