@@ -8,8 +8,9 @@
   #filter { flex: 1; }
   table { border-collapse: collapse; width: 100%; table-layout: fixed; }
   th, td { border-bottom: 1px solid #ddd; padding: 3px 4px; text-align: left; vertical-align: top; }
-  td { word-break: break-all; }
-  .v { font-family: ui-monospace, monospace; }
+  td { overflow-wrap: anywhere; }
+  .v { font-family: ui-monospace, monospace; word-break: break-all; }
+  td button { white-space: nowrap; }
   .muted { color: #888; }
 </style>
 </head>
@@ -22,8 +23,8 @@
 <button id="grant" hidden>このサイトの Cookie を読む許可を出す</button>
 <div id="msg" class="muted"></div>
 <table hidden id="tbl">
-  <colgroup><col style="width:22%"><col style="width:36%"><col style="width:18%"><col style="width:16%"><col style="width:8%"></colgroup>
-  <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>属性 / 期限</th><th></th></tr></thead>
+  <colgroup><col style="width:20%"><col style="width:32%"><col style="width:15%"><col style="width:24%"><col style="width:9%"></colgroup>
+  <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>属性 / 期限</th><th>Copy</th></tr></thead>
   <tbody></tbody>
 </table>
 <script src="popup.js"></script>
