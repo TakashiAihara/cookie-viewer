@@ -13,18 +13,29 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Tag must match the manifest version
+        with:
+          fetch-depth: 0
+      - name: Tag must be on main and match the manifest version
         run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "tag $GITHUB_REF_NAME is not on main"; exit 1; }
           v="$(jq -r .version extension/manifest.json)"
           [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match manifest version $v"; exit 1; }
-      - run: cd extension && zip -qrX ../secure-cookie-viewer.zip .
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - run: bun test
+      - id: pack
+        run: echo "sha256=$(scripts/pack.sh secure-cookie-viewer.zip)" >> "$GITHUB_OUTPUT"
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: secure-cookie-viewer.zip
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
+          SHA256: ${{ steps.pack.outputs.sha256 }}
         run: |
-          sum="$(sha256sum secure-cookie-viewer.zip | cut -d' ' -f1)"
-          gh release create "$GITHUB_REF_NAME" secure-cookie-viewer.zip --title "$GITHUB_REF_NAME" \
-            --notes "sha256: \`$sum\`. Verify with \`gh attestation verify secure-cookie-viewer.zip --repo $GITHUB_REPOSITORY\`."
+          gh release create "$GITHUB_REF_NAME" secure-cookie-viewer.zip --title "$GITHUB_REF_NAME" --notes "sha256: \`$SHA256\`
+
+          Rebuild it from this tag with \`scripts/pack.sh\` and compare, or verify the attestation with \`gh attestation verify secure-cookie-viewer.zip --repo $GITHUB_REPOSITORY\`."

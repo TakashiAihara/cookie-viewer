@@ -66,8 +66,18 @@ async function load(url) {
 function offerRevoke(origins) {
   $("revoke").hidden = false;
   $("revoke").onclick = async () => {
-    if (!(await chrome.permissions.remove({ origins }))) {
-      $("msg").textContent = "取り消せませんでした";
+    try {
+      if (!(await chrome.permissions.remove({ origins }))) {
+        $("msg").textContent = "取り消せませんでした";
+        return;
+      }
+      // remove は一致するパターンしか外さないので、「すべてのサイト」などで許可されていると読める状態が残る。
+      if (await chrome.permissions.contains({ origins })) {
+        $("msg").textContent = "このサイトは chrome://extensions の「サイトへのアクセス」で許可されているため、ここでは取り消せません";
+        return;
+      }
+    } catch (e) {
+      $("msg").textContent = "取り消せませんでした: " + e.message;
       return;
     }
     cookies = null;
@@ -96,7 +106,14 @@ function offerRevoke(origins) {
 
   $("grant").hidden = false;
   $("grant").onclick = async () => {
-    if (await chrome.permissions.request({ origins })) {
+    let granted;
+    try {
+      granted = await chrome.permissions.request({ origins });
+    } catch (e) {
+      $("msg").textContent = "許可を求められませんでした: " + e.message;
+      return;
+    }
+    if (granted) {
       $("grant").hidden = true;
       offerRevoke(origins);
       load(url);
