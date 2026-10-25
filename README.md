@@ -12,8 +12,8 @@ It shows the cookies stored for the current tab's URL, and nothing else. It is m
 
 These hold whatever the code does, because Chrome refuses the rest.
 
-- At install time the extension can read no site. Read access comes only from `optional_host_permissions`, which the user grants. The popup asks for the current origin only, and can revoke it again
-- The popup page cannot make requests: its Content Security Policy is `default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, which blocks `fetch`, XHR, `sendBeacon`, WebSocket, images, styles and scripts from anywhere but the package, and inline scripts and styles
+- At install time the extension has no host permission. Host access is in `optional_host_permissions`, which the user grants (`activeTab` also grants temporary access to the current tab when the toolbar button is clicked; the popup does not read cookies until the site is granted)
+- The popup page cannot fetch or load anything: its Content Security Policy is `default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, which blocks `fetch`, XHR, `sendBeacon` and WebSocket, images and fonts from anywhere, scripts and styles from outside the package, and inline scripts and styles
 - No content script, no `scripting` permission, no background script
 
 ### Not in the code, pinned by tests
@@ -30,8 +30,8 @@ A CSP does not cover everything. Navigation, opening a tab (`window.open`, `chro
 
 - `scripts/pack.sh` builds the zip reproducibly (fixed timestamps, modes and order), so a zip rebuilt from a tag has the same sha256 as the release
 - Each release is built by GitHub Actions from a tag on `main` after the tests pass, and carries a build provenance attestation (`gh attestation verify secure-cookie-viewer.zip --repo TakashiAihara/secure-cookie-viewer`)
-- The Chrome Web Store repackages what is uploaded, so the attestation covers the GitHub release, not the file Chrome installs. To compare, unpack the installed extension (`chrome://extensions` shows its ID; the files are in the profile's `Extensions/<ID>/<version>` directory) and diff it against the release zip; the store adds `_metadata/`
-- Updates after the first listing are uploaded as CRX files signed with a key that is not kept in the Google account (Chrome Web Store "Verified CRX uploads"). Google describes this as a way to "prevent malicious updates if your developer account is compromised"
+- The Chrome Web Store repackages what is uploaded, so the attestation covers the GitHub release, not the file Chrome installs. To compare, find the installed files (`chrome://extensions` shows the ID; they are in the profile's `Extensions/<ID>/<version>_0` directory) and diff them against the release zip. The store adds a `_metadata/` directory and rewrites `manifest.json` (it adds keys such as `update_url`); every other file should match byte for byte
+- The plan is to upload updates after the first listing as CRX files signed with a key that is not kept in the Google account (Chrome Web Store "Verified CRX uploads"). Google describes this as a way to "prevent malicious updates if your developer account is compromised"
 
 ### Limits
 

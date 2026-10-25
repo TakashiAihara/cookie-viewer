@@ -163,6 +163,7 @@ test("says so when reading fails", async () => {
   const p = await openPopup(`${SITE}/?fail=read`);
   await waitMsg(p, "読み込めませんでした: boom");
   expect(await p.locator("#tbl").isHidden()).toBe(true);
+  expect(await p.locator("#revoke").isHidden()).toBe(true);
 }, 30_000);
 
 test("asks for permission instead of reading a site that was not granted", async () => {
@@ -189,12 +190,27 @@ test("says so when the permission is denied", async () => {
   await p.click("#grant");
   await waitMsg(p, "許可されませんでした");
   expect(await p.locator("#tbl").isHidden()).toBe(true);
+  expect(await p.locator("#revoke").isHidden()).toBe(true);
+  expect(await p.locator("#grant").isHidden()).toBe(false);
 }, 30_000);
 
 test("says so when the permission request throws", async () => {
   const p = await openPopup(`${SITE}/?grant=throw`);
   await p.click("#grant");
   await waitMsg(p, "許可を求められませんでした: no gesture");
+  expect(await p.locator("#tbl").isHidden()).toBe(true);
+  expect(await p.locator("#revoke").isHidden()).toBe(true);
+}, 30_000);
+
+test("after granting, revoking works and the grant button comes back", async () => {
+  const p = await openPopup(`${SITE}/app?grant&revoke`);
+  await p.click("#grant");
+  await waitMsg(p, "6 件");
+  await p.click("#revoke");
+  await waitMsg(p, "許可を取り消しました");
+  expect(await p.evaluate(() => (window as any).__removed)).toEqual({ origins: [`${SITE}/*`] });
+  expect(await p.locator("#tbl").isHidden()).toBe(true);
+  expect(await p.locator("#grant").isHidden()).toBe(false);
 }, 30_000);
 
 test("revokes the site's permission and clears the list", async () => {
@@ -206,6 +222,7 @@ test("revokes the site's permission and clears the list", async () => {
   expect(await p.locator("#tbl").isHidden()).toBe(true);
   expect(await p.locator("tbody tr").count()).toBe(0);
   expect(await p.locator("#revoke").isHidden()).toBe(true);
+  expect(await p.locator("#grant").isHidden()).toBe(false);
   await p.check("#reveal");
   expect(await p.locator("#tbl").isHidden()).toBe(true);
 }, 30_000);
@@ -215,6 +232,9 @@ test("does not claim to have revoked a site that a broader grant still covers", 
   await p.click("#revoke");
   await waitMsg(p, "このサイトは chrome://extensions の「サイトへのアクセス」で許可されているため、ここでは取り消せません");
   expect(await p.locator("#tbl").isHidden()).toBe(false);
+  expect(await p.locator("tbody tr").count()).toBe(6);
+  expect(await p.locator("#revoke").isHidden()).toBe(false);
+  expect(await p.locator("#grant").isHidden()).toBe(true);
 }, 30_000);
 
 test("says so when revoking fails or throws, and keeps the list", async () => {
@@ -238,13 +258,13 @@ test("refuses non-http pages, and keeps refusing after the controls are touched"
 
 test("the CSP blocks requests, and a full session sends, opens and stores nothing", async () => {
   const outside: string[] = [];
-  const pages: string[] = [];
+  const pages: Page[] = [];
   const onRequest = (r: { url(): string }) => { if (!r.url().startsWith("chrome-extension://")) outside.push(r.url()); };
-  const onPage = (pg: Page) => pages.push(pg.url());
+  const onPage = (pg: Page) => pages.push(pg);
   ctx.on("request", onRequest);
+  ctx.on("page", onPage);
 
   const p = await openGranted();
-  ctx.on("page", onPage);
   await p.check("#reveal");
   await p.fill("#filter", "s");
   await p.getByRole("button", { name: "copy value of sid" }).click();
@@ -252,16 +272,18 @@ test("the CSP blocks requests, and a full session sends, opens and stores nothin
   // Nothing the popup did on its own tripped the CSP (this would also catch an inline style left in popup.html).
   expect(await p.evaluate(() => (window as any).__violations)).toEqual([]);
 
-  // no-cors would resolve with an opaque response if the request were allowed, so only the CSP can reject it.
+  // A no-cors fetch is not stopped by CORS, so a rejection with a connect-src violation is the CSP's doing
+  // (a network failure would reject without a violation).
   const fetched = await p.evaluate(() => fetch("https://example.com/", { mode: "no-cors" }).then(() => "sent", () => "blocked"));
-  await p.waitForTimeout(100);
+  await p.waitForFunction(() => (window as any).__violations.length > 0);
   expect(fetched).toBe("blocked");
   expect(await p.evaluate(() => (window as any).__violations)).toEqual(["connect-src"]);
 
   ctx.off("request", onRequest);
   ctx.off("page", onPage);
   expect(outside).toEqual([]);
-  expect(pages).toEqual([]);
+  // The only new page is the popup the test itself opened.
+  expect(pages).toEqual([p]);
 
   const stored = await p.evaluate(async () => [
     localStorage.length,
@@ -295,6 +317,15 @@ test("the package contains no way out that the CSP does not cover", () => {
     "incognito", "manifest_version", "minimum_chrome_version", "name", "optional_host_permissions", "permissions",
     "version"]);
   expect(manifest.permissions).toEqual(["cookies", "activeTab"]);
+  expect(manifest.optional_host_permissions).toEqual(["http://*/*", "https://*/*"]);
+  expect(manifest.content_security_policy).toEqual({
+    extension_pages: "default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  });
+  // A new file in the package, or a second script, would escape this scan.
+  const files = new Bun.Glob("**/*").scanSync({ cwd: dir, dot: true });
+  expect([...files].sort()).toEqual(["icons/icon128.png", "icons/icon16.png", "icons/icon32.png", "icons/icon48.png",
+    "manifest.json", "popup.css", "popup.html", "popup.js"]);
+  expect([...html.matchAll(/<script\b[^>]*>/g)].map((m) => m[0])).toEqual(['<script src="popup.js">']);
 }, 30_000);
 
 // Last, so it sees the errors of every popup above.

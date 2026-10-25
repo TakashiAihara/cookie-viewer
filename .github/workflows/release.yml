@@ -27,7 +27,9 @@ jobs:
       - run: bunx playwright install --with-deps chromium
       - run: bun test
       - id: pack
-        run: echo "sha256=$(scripts/pack.sh secure-cookie-viewer.zip)" >> "$GITHUB_OUTPUT"
+        run: |
+          sha256="$(scripts/pack.sh secure-cookie-viewer.zip)"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: secure-cookie-viewer.zip

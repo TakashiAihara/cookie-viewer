@@ -63,7 +63,7 @@ async function load(url) {
   render();
 }
 
-function offerRevoke(origins) {
+function offerRevoke(url, origins) {
   $("revoke").hidden = false;
   $("revoke").onclick = async () => {
     try {
@@ -85,7 +85,33 @@ function offerRevoke(origins) {
     $("tbl").tBodies[0].replaceChildren();
     $("revoke").hidden = true;
     $("msg").textContent = "許可を取り消しました";
+    askGrant(url, origins);
   };
+}
+
+function askGrant(url, origins) {
+  $("grant").hidden = false;
+  $("grant").onclick = async () => {
+    let granted;
+    try {
+      granted = await chrome.permissions.request({ origins });
+    } catch (e) {
+      $("msg").textContent = "許可を求められませんでした: " + e.message;
+      return;
+    }
+    if (!granted) {
+      $("msg").textContent = "許可されませんでした";
+      return;
+    }
+    $("grant").hidden = true;
+    await showGranted(url, origins);
+  };
+}
+
+// 取り消しボタンは読み込みが終わってから出す。先に出すと、取り消した後に読み込みが終わって一覧が戻る。
+async function showGranted(url, origins) {
+  await load(url);
+  if (cookies) offerRevoke(url, origins);
 }
 
 (async () => {
@@ -99,28 +125,8 @@ function offerRevoke(origins) {
   $("host").textContent = origin;
   const origins = [origin + "/*"];
 
-  if (await chrome.permissions.contains({ origins })) {
-    offerRevoke(origins);
-    return load(url);
-  }
-
-  $("grant").hidden = false;
-  $("grant").onclick = async () => {
-    let granted;
-    try {
-      granted = await chrome.permissions.request({ origins });
-    } catch (e) {
-      $("msg").textContent = "許可を求められませんでした: " + e.message;
-      return;
-    }
-    if (granted) {
-      $("grant").hidden = true;
-      offerRevoke(origins);
-      load(url);
-    } else {
-      $("msg").textContent = "許可されませんでした";
-    }
-  };
+  if (await chrome.permissions.contains({ origins })) await showGranted(url, origins);
+  else askGrant(url, origins);
 })();
 
 $("filter").oninput = render;
