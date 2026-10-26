@@ -9,6 +9,8 @@ import { chromium, type BrowserContext, type Page } from "playwright";
 
 const XSS = "<img src=x onerror=document.title='pwned'>";
 const SITE = "https://example.test";
+// An unbroken token, like a JWT, must wrap inside its cell.
+const LONG = "eyJhbGciOiJIUzI1NiJ9".repeat(12);
 let ctx: BrowserContext;
 let extId: string;
 // Chrome hashes the resolved path, so a symlinked TMPDIR (macOS) must be resolved first.
@@ -31,6 +33,8 @@ beforeAll(async () => {
 
   ctx = await chromium.launchPersistentContext(join(tmp, "profile"), {
     channel: "chromium",
+    // The expiry format follows the browser locale, so it is fixed for the format assertion.
+    locale: "en-US",
     args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`],
   });
   await ctx.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -96,7 +100,7 @@ beforeAll(async () => {
       { ...base, name: "Plain", value: "hello", path: "/app", expires: Date.now() / 1000 + 3600 },
       { ...base, name: "chips", value: "part", sameSite: "None", partitionKey: part(SITE, false) },
       { ...base, name: "chips_cross", value: "x", sameSite: "None", partitionKey: part(SITE, true) },
-      { ...base, name: "chips_other", value: "o", sameSite: "None", partitionKey: part("https://other.test", false) },
+      { ...base, name: "chips_other", value: LONG, sameSite: "None", partitionKey: part("https://other.test", false) },
     ],
   } as never);
 }, 60_000);
@@ -117,6 +121,12 @@ async function openPopup(target: string) {
 
 const rows = (p: Page) =>
   p.$$eval("tbody tr", (trs) => trs.map((tr) => [...tr.cells].map((td) => td.textContent ?? "")));
+// The list scrolls inside the popup, so content wider than it would hide the copy column.
+const overflows = (p: Page) =>
+  p.$$eval("#list, th, tbody td", (els) => els.some((e) => e.scrollWidth > e.clientWidth));
+const chipClass = (p: Page, name: string, text: string) =>
+  p.$$eval("tbody tr", (trs, [n, t]) => [...trs.find((tr) => tr.cells[0].textContent === n)!.cells[3].children]
+    .find((e) => e.textContent === t)?.className, [name, text]);
 const row = async (p: Page, name: string) => (await rows(p)).find((r) => r[0] === name)!;
 const msg = (p: Page) => p.locator("#msg").textContent();
 const waitMsg = (p: Page, text: string) =>
@@ -137,19 +147,34 @@ test("lists every cookie including partitioned ones, values masked until reveale
   expect((await row(p, "Plain"))[1]).toBe("••••••••");
   expect((await row(p, "sid"))[2]).toBe("example.test/");
   expect((await row(p, "Plain"))[2]).toBe("example.test/app");
-  expect((await row(p, "sid"))[3]).toBe("Secure HttpOnly SameSite=Strict Session");
-  expect((await row(p, "xss"))[3]).toBe("Secure SameSite=Lax Session");
+  expect((await row(p, "sid"))[3]).toBe("Secure HttpOnly Strict Session");
+  expect((await row(p, "xss"))[3]).toBe("Secure Lax Session");
   expect((await row(p, "chips"))[3]).toBe(`Secure SameSite=None Partitioned(${SITE}) Session`);
   expect((await row(p, "chips_cross"))[3]).toBe(`Secure SameSite=None Partitioned(${SITE}, cross-site) Session`);
   expect((await row(p, "chips_other"))[3]).toBe("Secure SameSite=None Partitioned(https://other.test) Session");
-  expect((await row(p, "Plain"))[3]).toMatch(/^Secure \d/);
+  // Expiry shows the time too: a date alone hides a cookie that expires in minutes.
+  expect((await row(p, "Plain"))[3]).toMatch(/^Secure \d{1,2}\/\d{1,2}\/\d\d, \d{1,2}:\d\d [AP]M$/);
+  // Only Lax / Strict are shortened in the cell; the tooltip on that badge names the attribute.
+  const titles = (name: string) =>
+    p.$$eval("tbody tr", (trs, n) => [...trs.find((tr) => tr.cells[0].textContent === n)!.querySelectorAll("[title]")]
+      .map((e) => e.getAttribute("title")), name);
+  expect(await titles("sid")).toEqual(["SameSite=Strict"]);
+  expect(await titles("chips")).toEqual([]);
+  expect(await titles("Plain")).toEqual([]);
+  expect(await chipClass(p, "sid", "HttpOnly")).toBe("chip httponly");
+  expect(await chipClass(p, "sid", "Strict")).toBe("chip");
+  expect(await chipClass(p, "chips", "SameSite=None")).toBe("chip weak");
+  expect(await chipClass(p, "sid", "Secure")).toBe("chip secure");
+  expect(await overflows(p)).toBe(false);
   expect(await p.locator("#host").textContent()).toBe(SITE);
 
   await p.check("#reveal");
   expect((await row(p, "sid"))[1]).toBe("secret123");
   expect((await row(p, "chips"))[1]).toBe("part");
   expect((await row(p, "xss"))[1]).toBe(XSS);
+  expect((await row(p, "chips_other"))[1]).toBe(LONG);
   expect(await p.locator("tbody img").count()).toBe(0);
+  expect(await overflows(p)).toBe(false);
 }, 30_000);
 
 test("filters by name ignoring case and counts the matches", async () => {
@@ -170,6 +195,8 @@ test("says so when copying fails", async () => {
   const p = await openGranted("?fail=copy");
   await p.getByRole("button", { name: "copy value of sid" }).click();
   await p.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent === "failed"));
+  // The longest label the copy button can show must still fit its column.
+  expect(await p.getByRole("button", { name: "copy value of sid" }).evaluate((b) => b.getBoundingClientRect().right <= b.parentElement!.getBoundingClientRect().right)).toBe(true);
 }, 30_000);
 
 test("says so when reading fails", async () => {
@@ -419,15 +446,15 @@ test("popup.js uses nothing outside the allowlist", async () => {
   // The clipboard leaves the browser (history, sync), so it may only ever receive the value of the row clicked.
   expect(clipboard).toEqual(["navigator.clipboard.writeText(c.value)"]);
   expect([...props].sort()).toEqual(["append", "checked", "className", "clipboard", "contains", "cookies",
-    "createElement", "disabled", "domain", "expirationDate", "filter", "getAll", "getElementById",
+    "createElement", "disabled", "domain", "expirationDate", "filter", "firstChild", "getAll", "getElementById",
     "hasCrossSiteAncestor", "hidden", "httpOnly", "includes", "insertCell", "insertRow", "join", "length",
     "localeCompare", "message", "name", "onchange", "onclick", "oninput", "origin", "partitionKey", "path",
-    "permissions", "push", "query", "remove", "replaceChildren", "request", "sameSite", "secure", "session",
+    "permissions", "query", "remove", "replaceChildren", "request", "sameSite", "secure", "session",
     "setAttribute", "sort", "tabs", "test", "textContent", "then", "toLocaleString", "toLowerCase", "topLevelSite",
     "url", "value", "writeText"]);
-  expect(attrs).toEqual(["aria-label"]);
-  // A created element is inert only because it is a button; an img, iframe, script or style could load or run.
-  expect(tags).toEqual(["button"]);
+  expect(attrs).toEqual(["title", "aria-label"]);
+  // A created element is inert only because it is a span or a button; an img, iframe, script or style could load or run.
+  expect(tags).toEqual(["span", "button"]);
   const allowedSyntax = ["ArrayExpression", "ArrayPattern", "ArrowFunctionExpression", "AssignmentExpression",
     "AwaitExpression", "BinaryExpression", "BlockStatement", "CallExpression", "CatchClause", "ConditionalExpression",
     "ExpressionStatement", "ForOfStatement", "FunctionDeclaration", "Identifier", "IfStatement", "Literal",
@@ -461,19 +488,25 @@ const POPUP_HTML = `<!doctype html>
 <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-<div id="host" class="muted"></div>
+<header id="head">
+  <svg class="lock" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 10V7.5a4.5 4.5 0 0 1 9 0V10M6 10h12v10H6z"/></svg>
+  <h1>Secure Cookie Viewer</h1>
+  <div id="host"></div>
+</header>
 <div id="bar">
   <input id="filter" placeholder="Filter by name">
   <label><input type="checkbox" id="reveal"> Show values</label>
 </div>
-<button id="grant" hidden>Allow reading this site's cookies</button>
 <div id="msg" class="muted"></div>
+<button id="grant" hidden>Allow reading this site's cookies</button>
+<div id="list" tabindex="0" aria-label="Cookie list">
 <table hidden id="tbl">
   <colgroup><col><col><col><col><col></colgroup>
-  <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>Attributes / Expires</th><th>Copy</th></tr></thead>
+  <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>Attributes / SameSite / Expires</th><th>Copy</th></tr></thead>
   <tbody id="rows"></tbody>
 </table>
-<button id="revoke" hidden>Revoke access to this site</button>
+</div>
+<footer><button id="revoke" hidden>Revoke access to this site</button></footer>
 <script src="popup.js"></script>
 </body>
 </html>
