@@ -499,7 +499,7 @@ const POPUP_HTML = `<!doctype html>
 </div>
 <div id="msg" class="muted"></div>
 <button id="grant" hidden>Allow reading this site's cookies</button>
-<div id="list">
+<div id="list" tabindex="0" aria-label="Cookie list">
 <table hidden id="tbl">
   <colgroup><col><col><col><col><col></colgroup>
   <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>Attributes / SameSite / Expires</th><th>Copy</th></tr></thead>
