@@ -123,7 +123,7 @@ const rows = (p: Page) =>
   p.$$eval("tbody tr", (trs) => trs.map((tr) => [...tr.cells].map((td) => td.textContent ?? "")));
 // The list scrolls inside the popup, so content wider than it would hide the copy column.
 const overflows = (p: Page) =>
-  p.$$eval("#list, tbody td", (els) => els.some((e) => e.scrollWidth > e.clientWidth));
+  p.$$eval("#list, th, tbody td", (els) => els.some((e) => e.scrollWidth > e.clientWidth));
 const chipClass = (p: Page, name: string, text: string) =>
   p.$$eval("tbody tr", (trs, [n, t]) => [...trs.find((tr) => tr.cells[0].textContent === n)!.cells[3].children]
     .find((e) => e.textContent === t)?.className, [name, text]);
