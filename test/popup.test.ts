@@ -9,6 +9,8 @@ import { chromium, type BrowserContext, type Page } from "playwright";
 
 const XSS = "<img src=x onerror=document.title='pwned'>";
 const SITE = "https://example.test";
+// An unbroken token, like a JWT, must wrap inside its cell.
+const LONG = "eyJhbGciOiJIUzI1NiJ9".repeat(12);
 let ctx: BrowserContext;
 let extId: string;
 // Chrome hashes the resolved path, so a symlinked TMPDIR (macOS) must be resolved first.
@@ -31,6 +33,8 @@ beforeAll(async () => {
 
   ctx = await chromium.launchPersistentContext(join(tmp, "profile"), {
     channel: "chromium",
+    // The expiry format follows the browser locale, so it is fixed for the format assertion.
+    locale: "en-US",
     args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`],
   });
   await ctx.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -96,7 +100,7 @@ beforeAll(async () => {
       { ...base, name: "Plain", value: "hello", path: "/app", expires: Date.now() / 1000 + 3600 },
       { ...base, name: "chips", value: "part", sameSite: "None", partitionKey: part(SITE, false) },
       { ...base, name: "chips_cross", value: "x", sameSite: "None", partitionKey: part(SITE, true) },
-      { ...base, name: "chips_other", value: "o", sameSite: "None", partitionKey: part("https://other.test", false) },
+      { ...base, name: "chips_other", value: LONG, sameSite: "None", partitionKey: part("https://other.test", false) },
     ],
   } as never);
 }, 60_000);
@@ -118,7 +122,8 @@ async function openPopup(target: string) {
 const rows = (p: Page) =>
   p.$$eval("tbody tr", (trs) => trs.map((tr) => [...tr.cells].map((td) => td.textContent ?? "")));
 // The list scrolls inside the popup, so content wider than it would hide the copy column.
-const overflows = (p: Page) => p.$eval("#list", (l) => l.scrollWidth > l.clientWidth);
+const overflows = (p: Page) =>
+  p.$$eval("#list, tbody td", (els) => els.some((e) => e.scrollWidth > e.clientWidth));
 const chipClass = (p: Page, name: string, text: string) =>
   p.$$eval("tbody tr", (trs, [n, t]) => [...trs.find((tr) => tr.cells[0].textContent === n)!.cells[3].children]
     .find((e) => e.textContent === t)?.className, [name, text]);
@@ -144,21 +149,22 @@ test("lists every cookie including partitioned ones, values masked until reveale
   expect((await row(p, "Plain"))[2]).toBe("example.test/app");
   expect((await row(p, "sid"))[3]).toBe("Secure HttpOnly Strict Session");
   expect((await row(p, "xss"))[3]).toBe("Secure Lax Session");
-  expect((await row(p, "chips"))[3]).toBe(`Secure None Partitioned(${SITE}) Session`);
-  expect((await row(p, "chips_cross"))[3]).toBe(`Secure None Partitioned(${SITE}, cross-site) Session`);
-  expect((await row(p, "chips_other"))[3]).toBe("Secure None Partitioned(https://other.test) Session");
+  expect((await row(p, "chips"))[3]).toBe(`Secure SameSite=None Partitioned(${SITE}) Session`);
+  expect((await row(p, "chips_cross"))[3]).toBe(`Secure SameSite=None Partitioned(${SITE}, cross-site) Session`);
+  expect((await row(p, "chips_other"))[3]).toBe("Secure SameSite=None Partitioned(https://other.test) Session");
   // Expiry shows the time too: a date alone hides a cookie that expires in minutes.
-  expect((await row(p, "Plain"))[3]).toMatch(/^Secure \d\S* \d{1,2}:\d\d/);
-  // Only the SameSite value is shortened in the cell; the tooltip names the attribute.
+  expect((await row(p, "Plain"))[3]).toMatch(/^Secure \d{1,2}\/\d{1,2}\/\d\d, \d{1,2}:\d\d [AP]M$/);
+  // Only Lax / Strict are shortened in the cell; the tooltip on that badge names the attribute.
   const titles = (name: string) =>
     p.$$eval("tbody tr", (trs, n) => [...trs.find((tr) => tr.cells[0].textContent === n)!.querySelectorAll("[title]")]
       .map((e) => e.getAttribute("title")), name);
   expect(await titles("sid")).toEqual(["SameSite=Strict"]);
-  expect(await titles("chips")).toEqual(["SameSite=None"]);
+  expect(await titles("chips")).toEqual([]);
   expect(await titles("Plain")).toEqual([]);
   expect(await chipClass(p, "sid", "HttpOnly")).toBe("chip httponly");
   expect(await chipClass(p, "sid", "Strict")).toBe("chip");
-  expect(await chipClass(p, "chips", "None")).toBe("chip weak");
+  expect(await chipClass(p, "chips", "SameSite=None")).toBe("chip weak");
+  expect(await chipClass(p, "sid", "Secure")).toBe("chip secure");
   expect(await overflows(p)).toBe(false);
   expect(await p.locator("#host").textContent()).toBe(SITE);
 
@@ -166,6 +172,7 @@ test("lists every cookie including partitioned ones, values masked until reveale
   expect((await row(p, "sid"))[1]).toBe("secret123");
   expect((await row(p, "chips"))[1]).toBe("part");
   expect((await row(p, "xss"))[1]).toBe(XSS);
+  expect((await row(p, "chips_other"))[1]).toBe(LONG);
   expect(await p.locator("tbody img").count()).toBe(0);
   expect(await overflows(p)).toBe(false);
 }, 30_000);

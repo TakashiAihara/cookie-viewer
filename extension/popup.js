@@ -18,14 +18,15 @@ function chip(el, text, cls, title) {
   el.append(s);
 }
 
-// SameSite shows only its value to keep common rows on one line; the column header and the tooltip name it.
-// Everything else stays visible text, because a tooltip cannot be reached from the keyboard.
+// Lax and Strict show only the value to keep common rows on one line. None, the weakest setting, is spelled out:
+// a bare "None" reads as "no attributes", and a tooltip cannot be reached from the keyboard.
 function attrs(td, c) {
   td.className = "at";
   if (c.secure) chip(td, "Secure", "chip secure");
   if (c.httpOnly) chip(td, "HttpOnly", "chip httponly");
   const ss = sameSiteAttr(c.sameSite);
-  if (ss) chip(td, ss, ss === "None" ? "chip weak" : "chip", "SameSite=" + ss);
+  if (ss === "None") chip(td, "SameSite=None", "chip weak");
+  else if (ss) chip(td, ss, "chip", "SameSite=" + ss);
   if (c.partitionKey) {
     const k = [c.partitionKey.topLevelSite, c.partitionKey.hasCrossSiteAncestor && "cross-site"].filter(Boolean);
     chip(td, k.length ? "Partitioned(" + k.join(", ") + ")" : "Partitioned", "chip");

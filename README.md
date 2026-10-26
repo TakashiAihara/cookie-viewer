@@ -24,7 +24,7 @@ A CSP does not cover everything. Navigation, opening a tab (`window.open`, `chro
 - The clipboard is the one way out the extension does use. The test allows exactly one call, `navigator.clipboard.writeText(c.value)` for the row clicked, and the browser test checks that listing, revealing and filtering leave the clipboard unchanged
 - The package's file list, the whole of `popup.html`, `popup.css` (no `url()` or `@import`) and the whole manifest (keys, permissions, host patterns, CSP) are pinned as well
 - A browser test runs a full session (list, reveal, filter, copy) and checks that no request leaves the extension, no tab or window opens, nothing lands in `localStorage`, `sessionStorage`, IndexedDB or the Cache API, and nothing trips the CSP. It then checks that a request is blocked by the CSP
-- Cookie data (name, value, domain, path, attributes) reaches the page only through `textContent`, and the one `title` it sets is built from a fixed SameSite word; a test feeds a value containing HTML
+- Cookie values reach the page only through `textContent`; a test feeds a value containing HTML. Names, domains, paths and attributes also go in as text, and the name is also set as plain text in the copy button's `aria-label`
 - No third-party code: the package is plain HTML, CSS and JavaScript with no dependencies. `playwright`, `acorn` and `acorn-walk` are used only by the tests and are not in the package
 
 These tests stop a mistake in this repository from shipping. They are not a guarantee about a build you install: a malicious update would ship with its own tests. For that, see the release checks below, or read `popup.js` (about 160 lines) yourself.
