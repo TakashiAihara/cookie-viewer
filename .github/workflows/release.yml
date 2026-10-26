@@ -89,6 +89,8 @@ jobs:
           name: secure-cookie-viewer-${{ github.ref_name }}.crx
           path: ext.crx
           if-no-files-found: error
+          # A re-run of this job uploads it again under the same name.
+          overwrite: true
       - id: auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
@@ -105,11 +107,12 @@ jobs:
         run: |
           set -o pipefail
           auth() { printf 'Authorization: Bearer %s' "$TOKEN"; }
-          api() { curl -sS --max-time 120 -H @<(auth) "$@"; }
+          api() { curl -sS --fail-with-body --max-time 120 -H @<(auth) "$@"; }
           status() { api "https://chromewebstore.googleapis.com/v2/$ITEM:fetchStatus" | jq 'del(.publicKey)'; }
 
           # A version still in review blocks a new one; cancel it in the dashboard, then re-run this job.
           status | tee before.json
+          jq -e '.itemId' before.json > /dev/null
           if jq -e '.submittedItemRevisionStatus.state == "PENDING_REVIEW"' before.json > /dev/null; then
             echo "::error::a previous version is still in review"
             exit 1
