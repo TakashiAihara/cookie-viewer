@@ -7,6 +7,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      sha256: ${{ steps.pack.outputs.sha256 }}
     permissions:
       contents: write
       id-token: write
@@ -45,3 +47,91 @@ jobs:
           gh release create "$GITHUB_REF_NAME" secure-cookie-viewer.zip --title "$GITHUB_REF_NAME" --notes "sha256: \`$SHA256\`
 
           Rebuild it from this tag with \`scripts/pack.sh\` and compare, or verify the attestation with \`gh attestation verify secure-cookie-viewer.zip --repo $GITHUB_REPOSITORY\`."
+
+  # Sends the released zip to the Chrome Web Store as a CRX signed with the Verified CRX uploads key, and
+  # submits it; the store publishes it once review passes. The key and the Google credentials are reachable
+  # only from the cws-release environment, which only v* tags may use, and Google accepts the OIDC token
+  # only from this workflow on a v* tag in that environment.
+  store:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: cws-release
+    # A second tag pushed while one is in flight would find the first still uploading or in review.
+    concurrency:
+      group: cws-release
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download the released zip and check it is the one just built
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA256: ${{ needs.release.outputs.sha256 }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" -p secure-cookie-viewer.zip
+          echo "$SHA256  secure-cookie-viewer.zip" | sha256sum -c -
+          mkdir ext
+          unzip -q secure-cookie-viewer.zip -d ext
+      - name: Sign the CRX
+        env:
+          KEY: ${{ secrets.CWS_CRX_SIGNING_KEY }}
+        run: |
+          key="$RUNNER_TEMP/key.pem"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$KEY" > "$key")
+          google-chrome --headless=new --enable-logging=stderr --pack-extension="$PWD/ext" --pack-extension-key="$key"
+          test -s ext.crx
+      # Kept so a failed upload can be retried by hand: the key cannot be read back from the secret.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: secure-cookie-viewer-${{ github.ref_name }}.crx
+          path: ext.crx
+          if-no-files-found: error
+          # A re-run of this job uploads it again under the same name.
+          overwrite: true
+      - id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+          # The token stays in this job's outputs; no credentials file is written into the workspace.
+          create_credentials_file: false
+      - name: Upload and submit for review
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          ITEM: publishers/${{ vars.CWS_PUBLISHER_ID }}/items/${{ vars.CWS_ITEM_ID }}
+        run: |
+          set -o pipefail
+          auth() { printf 'Authorization: Bearer %s' "$TOKEN"; }
+          api() { curl -sS --fail-with-body --max-time 120 -H @<(auth) "$@"; }
+          status() { api "https://chromewebstore.googleapis.com/v2/$ITEM:fetchStatus" | jq 'del(.publicKey)'; }
+
+          # A version still in review blocks a new one; cancel it in the dashboard, then re-run this job.
+          status | tee before.json
+          jq -e '.itemId' before.json > /dev/null
+          if jq -e '.submittedItemRevisionStatus.state == "PENDING_REVIEW"' before.json > /dev/null; then
+            echo "::error::a previous version is still in review"
+            exit 1
+          fi
+
+          # Measured 2026-10-27: without the X-Goog-Upload headers the API rejects even a CRX with
+          # PKG_MUST_UPDATE_AS_CRX. The headers are in the Verified CRX uploads guide, not the v2 reference.
+          api -X POST -H 'X-Goog-Upload-Protocol: raw' \
+            -H "X-Goog-Upload-File-Name: secure-cookie-viewer-$GITHUB_REF_NAME.crx" --data-binary @ext.crx \
+            "https://chromewebstore.googleapis.com/upload/v2/$ITEM:upload" | tee upload.json
+          state="$(jq -r .uploadState upload.json)"
+          # The store may still be processing the package; fetchStatus reports how it ended.
+          for _ in $(seq 30); do
+            [ "$state" = IN_PROGRESS ] || break
+            sleep 10
+            state="$(status | jq -r .lastAsyncUploadState)"
+          done
+          [ "$state" = SUCCEEDED ] || { echo "::error::upload ended as $state"; exit 1; }
+
+          api -X POST "https://chromewebstore.googleapis.com/v2/$ITEM:publish" > publish.json
+          cat publish.json
+          jq -e '.state == "PENDING_REVIEW" or .state == "PUBLISHED"' publish.json > /dev/null
