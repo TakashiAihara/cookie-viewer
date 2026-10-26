@@ -2,10 +2,10 @@
   color-scheme: light;
   --bg: #fff; --bg-soft: #f5f7f9; --bg-hover: #eef3f6;
   --text: #17232d; --muted: #56656f; --subtle: #5c6a74;
-  --border: #d9e1e6; --border-strong: #c6d1d8;
+  --border: #d9e1e6; --control: #84939d;
   --accent: #087e8b; --accent-strong: #075f6a; --accent-soft: #e0f3f3;
   --warn: #7d5a12; --warn-soft: #fff4d9;
-  --danger: #a43e3e; --danger-soft: #fdeaea;
+  --danger: #a43e3e;
   --radius-sm: 5px; --radius-md: 8px;
   --font-xs: 11px; --font-sm: 12px; --font-lg: 14px;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -15,10 +15,10 @@
     color-scheme: dark;
     --bg: #1a252c; --bg-soft: #202d35; --bg-hover: #26353e;
     --text: #e8f0f2; --muted: #a6b8bf; --subtle: #8fa2ab;
-    --border: #304049; --border-strong: #41535d;
+    --border: #304049; --control: #6f838d;
     --accent: #58c4c6; --accent-strong: #7ad7d6; --accent-soft: #173e43;
     --warn: #e5bf62; --warn-soft: #493a1b;
-    --danger: #f28f8f; --danger-soft: #4a2528;
+    --danger: #f28f8f;
   }
 }
 * { box-sizing: border-box; }
@@ -39,10 +39,10 @@ h1 { margin: 0; font-size: var(--font-lg); font-weight: 600; white-space: nowrap
 #host { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-family: var(--mono); }
 
 #bar { display: flex; align-items: center; gap: 12px; height: 42px; flex: none; padding: 0 12px; }
-#filter { flex: 1; min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg); }
+#filter { flex: 1; min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--control); border-radius: var(--radius-md); background: var(--bg); }
 #filter::placeholder { color: var(--subtle); }
 #bar label { display: flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; cursor: pointer; }
-#reveal { appearance: none; margin: 0; width: 28px; height: 16px; flex: none; border-radius: 999px; background: var(--border-strong); position: relative; cursor: pointer; transition: background .15s; }
+#reveal { appearance: none; margin: 0; width: 28px; height: 16px; flex: none; border-radius: 999px; background: var(--control); position: relative; cursor: pointer; transition: background .15s; }
 #reveal::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); transition: transform .15s; }
 #reveal:checked { background: var(--accent); }
 #reveal:checked::after { transform: translateX(12px); }
@@ -53,28 +53,28 @@ h1 { margin: 0; font-size: var(--font-lg); font-weight: 600; white-space: nowrap
 
 #list { min-height: 0; flex: 1; overflow: auto; padding: 0 12px; }
 table { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: var(--font-xs); }
-col:nth-child(1) { width: 18%; }
-col:nth-child(2) { width: 16%; }
+col:nth-child(1) { width: 17%; }
+col:nth-child(2) { width: 14%; }
 col:nth-child(3) { width: 17%; }
-col:nth-child(4) { width: 41%; }
-col:nth-child(5) { width: 8%; }
+col:nth-child(4) { width: 42%; }
+col:nth-child(5) { width: 10%; }
 /* Revealed values are what the user came for, so they take the width and the attribute badges may wrap. */
-body:has(#reveal:checked) col:nth-child(2) { width: 33%; }
+body:has(#reveal:checked) col:nth-child(2) { width: 31%; }
 body:has(#reveal:checked) col:nth-child(3) { width: 14%; }
-body:has(#reveal:checked) col:nth-child(4) { width: 27%; }
-th { position: sticky; top: 0; height: 24px; padding: 0 6px; background: var(--bg-soft); color: var(--subtle); font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--border); }
+body:has(#reveal:checked) col:nth-child(4) { width: 28%; }
+th { position: sticky; top: 0; height: 24px; padding: 0 6px; background: var(--bg-soft); color: var(--subtle); font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: inset 0 -1px 0 var(--border); }
 td { padding: 5px 6px; vertical-align: middle; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 tr:hover td { background: var(--bg-hover); }
 .v { font-family: var(--mono); }
 td:first-child { font-weight: 700; }
 td:nth-child(2) { color: var(--muted); }
-.dp { color: var(--muted); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dp { color: var(--muted); font-family: var(--mono); }
 .at { line-height: 1.6; }
-.chip { display: inline-block; padding: 0 4px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--muted); line-height: 1.2; white-space: nowrap; }
-.secure { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; }
-.httponly { border-color: var(--warn); background: var(--warn-soft); color: var(--warn); font-weight: 600; }
+.chip { display: inline-block; padding: 0 4px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--muted); line-height: 1.2; }
+/* Accent marks the protective attributes; amber marks SameSite=None, the weakest setting. */
+.secure, .httponly { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; }
+.weak { border-color: var(--warn); background: var(--warn-soft); color: var(--warn); font-weight: 600; }
 .exp { color: var(--subtle); white-space: nowrap; }
-.session { color: var(--accent-strong); font-weight: 600; }
 td button { padding: 2px 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: transparent; color: var(--muted); white-space: nowrap; }
 td button:hover { background: var(--accent-soft); color: var(--accent-strong); }
 

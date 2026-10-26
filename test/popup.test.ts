@@ -116,7 +116,12 @@ async function openPopup(target: string) {
 }
 
 const rows = (p: Page) =>
-  p.$$eval("tbody tr", (trs) => trs.map((tr) => [...tr.cells].map((td) => (td.textContent ?? "").trim())));
+  p.$$eval("tbody tr", (trs) => trs.map((tr) => [...tr.cells].map((td) => td.textContent ?? "")));
+// The list scrolls inside the popup, so content wider than it would hide the copy column.
+const overflows = (p: Page) => p.$eval("#list", (l) => l.scrollWidth > l.clientWidth);
+const chipClass = (p: Page, name: string, text: string) =>
+  p.$$eval("tbody tr", (trs, [n, t]) => [...trs.find((tr) => tr.cells[0].textContent === n)!.cells[3].children]
+    .find((e) => e.textContent === t)?.className, [name, text]);
 const row = async (p: Page, name: string) => (await rows(p)).find((r) => r[0] === name)!;
 const msg = (p: Page) => p.locator("#msg").textContent();
 const waitMsg = (p: Page, text: string) =>
@@ -139,17 +144,22 @@ test("lists every cookie including partitioned ones, values masked until reveale
   expect((await row(p, "Plain"))[2]).toBe("example.test/app");
   expect((await row(p, "sid"))[3]).toBe("Secure HttpOnly Strict Session");
   expect((await row(p, "xss"))[3]).toBe("Secure Lax Session");
-  expect((await row(p, "chips"))[3]).toBe("Secure None Partitioned Session");
-  expect((await row(p, "Plain"))[3]).toMatch(/^Secure \d/);
-  // The cell shows only the short label; the full attribute is in the tooltip.
+  expect((await row(p, "chips"))[3]).toBe(`Secure None Partitioned(${SITE}) Session`);
+  expect((await row(p, "chips_cross"))[3]).toBe(`Secure None Partitioned(${SITE}, cross-site) Session`);
+  expect((await row(p, "chips_other"))[3]).toBe("Secure None Partitioned(https://other.test) Session");
+  // Expiry shows the time too: a date alone hides a cookie that expires in minutes.
+  expect((await row(p, "Plain"))[3]).toMatch(/^Secure \d\S* \d{1,2}:\d\d/);
+  // Only the SameSite value is shortened in the cell; the tooltip names the attribute.
   const titles = (name: string) =>
     p.$$eval("tbody tr", (trs, n) => [...trs.find((tr) => tr.cells[0].textContent === n)!.querySelectorAll("[title]")]
       .map((e) => e.getAttribute("title")), name);
-  expect(await titles("sid")).toEqual(["example.test/", "SameSite=Strict"]);
-  expect(await titles("chips")).toEqual(["example.test/", "SameSite=None", `Partitioned(${SITE})`]);
-  expect(await titles("chips_cross")).toEqual(["example.test/", "SameSite=None", `Partitioned(${SITE}, cross-site)`]);
-  expect(await titles("chips_other")).toEqual(["example.test/", "SameSite=None", "Partitioned(https://other.test)"]);
-  expect((await titles("Plain")).at(-1)).toMatch(/\d.*:\d\d/);
+  expect(await titles("sid")).toEqual(["SameSite=Strict"]);
+  expect(await titles("chips")).toEqual(["SameSite=None"]);
+  expect(await titles("Plain")).toEqual([]);
+  expect(await chipClass(p, "sid", "HttpOnly")).toBe("chip httponly");
+  expect(await chipClass(p, "sid", "Strict")).toBe("chip");
+  expect(await chipClass(p, "chips", "None")).toBe("chip weak");
+  expect(await overflows(p)).toBe(false);
   expect(await p.locator("#host").textContent()).toBe(SITE);
 
   await p.check("#reveal");
@@ -157,6 +167,7 @@ test("lists every cookie including partitioned ones, values masked until reveale
   expect((await row(p, "chips"))[1]).toBe("part");
   expect((await row(p, "xss"))[1]).toBe(XSS);
   expect(await p.locator("tbody img").count()).toBe(0);
+  expect(await overflows(p)).toBe(false);
 }, 30_000);
 
 test("filters by name ignoring case and counts the matches", async () => {
@@ -177,6 +188,8 @@ test("says so when copying fails", async () => {
   const p = await openGranted("?fail=copy");
   await p.getByRole("button", { name: "copy value of sid" }).click();
   await p.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent === "failed"));
+  // The longest label the copy button can show must still fit its column.
+  expect(await p.getByRole("button", { name: "copy value of sid" }).evaluate((b) => b.getBoundingClientRect().right <= b.parentElement!.getBoundingClientRect().right)).toBe(true);
 }, 30_000);
 
 test("says so when reading fails", async () => {
@@ -426,13 +439,13 @@ test("popup.js uses nothing outside the allowlist", async () => {
   // The clipboard leaves the browser (history, sync), so it may only ever receive the value of the row clicked.
   expect(clipboard).toEqual(["navigator.clipboard.writeText(c.value)"]);
   expect([...props].sort()).toEqual(["append", "checked", "className", "clipboard", "contains", "cookies",
-    "createElement", "disabled", "domain", "expirationDate", "filter", "getAll", "getElementById",
+    "createElement", "disabled", "domain", "expirationDate", "filter", "firstChild", "getAll", "getElementById",
     "hasCrossSiteAncestor", "hidden", "httpOnly", "includes", "insertCell", "insertRow", "join", "length",
     "localeCompare", "message", "name", "onchange", "onclick", "oninput", "origin", "partitionKey", "path",
     "permissions", "query", "remove", "replaceChildren", "request", "sameSite", "secure", "session",
-    "setAttribute", "sort", "tabs", "test", "textContent", "then", "toLocaleDateString", "toLocaleString", "toLowerCase", "topLevelSite",
+    "setAttribute", "sort", "tabs", "test", "textContent", "then", "toLocaleString", "toLowerCase", "topLevelSite",
     "url", "value", "writeText"]);
-  expect(attrs).toEqual(["title", "title", "aria-label"]);
+  expect(attrs).toEqual(["title", "aria-label"]);
   // A created element is inert only because it is a span or a button; an img, iframe, script or style could load or run.
   expect(tags).toEqual(["span", "button"]);
   const allowedSyntax = ["ArrayExpression", "ArrayPattern", "ArrowFunctionExpression", "AssignmentExpression",

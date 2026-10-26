@@ -14,24 +14,23 @@ function chip(el, text, cls, title) {
   s.textContent = text;
   s.className = cls;
   if (title) s.setAttribute("title", title);
-  el.append(s, " ");
+  if (el.firstChild) el.append(" ");
+  el.append(s);
 }
 
-// One line per cookie: the column is narrow, so SameSite shows only its value and long details go to the tooltip.
+// SameSite shows only its value to keep common rows on one line; the column header and the tooltip name it.
+// Everything else stays visible text, because a tooltip cannot be reached from the keyboard.
 function attrs(td, c) {
   td.className = "at";
   if (c.secure) chip(td, "Secure", "chip secure");
   if (c.httpOnly) chip(td, "HttpOnly", "chip httponly");
-  if (sameSiteAttr(c.sameSite)) chip(td, sameSiteAttr(c.sameSite), "chip", "SameSite=" + sameSiteAttr(c.sameSite));
+  const ss = sameSiteAttr(c.sameSite);
+  if (ss) chip(td, ss, ss === "None" ? "chip weak" : "chip", "SameSite=" + ss);
   if (c.partitionKey) {
     const k = [c.partitionKey.topLevelSite, c.partitionKey.hasCrossSiteAncestor && "cross-site"].filter(Boolean);
-    chip(td, "Partitioned", "chip", k.length ? "Partitioned(" + k.join(", ") + ")" : "");
+    chip(td, k.length ? "Partitioned(" + k.join(", ") + ")" : "Partitioned", "chip");
   }
-  if (c.session) chip(td, "Session", "exp session");
-  else {
-    const d = new Date(c.expirationDate * 1000);
-    chip(td, d.toLocaleDateString(), "exp", d.toLocaleString());
-  }
+  chip(td, c.session ? "Session" : new Date(c.expirationDate * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" }), "exp");
 }
 
 function cell(tr, text, cls) {
@@ -52,7 +51,7 @@ function render() {
     const tr = tbody.insertRow();
     cell(tr, c.name, "v");
     cell(tr, reveal ? c.value : "••••••••", "v");
-    cell(tr, c.domain + c.path, "dp").setAttribute("title", c.domain + c.path);
+    cell(tr, c.domain + c.path, "dp");
     attrs(tr.insertCell(), c);
     const btn = document.createElement("button");
     btn.textContent = "copy";
