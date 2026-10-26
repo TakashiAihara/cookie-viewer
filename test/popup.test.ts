@@ -116,7 +116,7 @@ async function openPopup(target: string) {
 }
 
 const rows = (p: Page) =>
-  p.$$eval("tbody tr", (trs) => trs.map((tr) => [...tr.cells].map((td) => td.textContent ?? "")));
+  p.$$eval("tbody tr", (trs) => trs.map((tr) => [...tr.cells].map((td) => (td.textContent ?? "").trim())));
 const row = async (p: Page, name: string) => (await rows(p)).find((r) => r[0] === name)!;
 const msg = (p: Page) => p.locator("#msg").textContent();
 const waitMsg = (p: Page, text: string) =>
@@ -137,12 +137,19 @@ test("lists every cookie including partitioned ones, values masked until reveale
   expect((await row(p, "Plain"))[1]).toBe("••••••••");
   expect((await row(p, "sid"))[2]).toBe("example.test/");
   expect((await row(p, "Plain"))[2]).toBe("example.test/app");
-  expect((await row(p, "sid"))[3]).toBe("Secure HttpOnly SameSite=Strict Session");
-  expect((await row(p, "xss"))[3]).toBe("Secure SameSite=Lax Session");
-  expect((await row(p, "chips"))[3]).toBe(`Secure SameSite=None Partitioned(${SITE}) Session`);
-  expect((await row(p, "chips_cross"))[3]).toBe(`Secure SameSite=None Partitioned(${SITE}, cross-site) Session`);
-  expect((await row(p, "chips_other"))[3]).toBe("Secure SameSite=None Partitioned(https://other.test) Session");
+  expect((await row(p, "sid"))[3]).toBe("Secure HttpOnly Strict Session");
+  expect((await row(p, "xss"))[3]).toBe("Secure Lax Session");
+  expect((await row(p, "chips"))[3]).toBe("Secure None Partitioned Session");
   expect((await row(p, "Plain"))[3]).toMatch(/^Secure \d/);
+  // The cell shows only the short label; the full attribute is in the tooltip.
+  const titles = (name: string) =>
+    p.$$eval("tbody tr", (trs, n) => [...trs.find((tr) => tr.cells[0].textContent === n)!.querySelectorAll("[title]")]
+      .map((e) => e.getAttribute("title")), name);
+  expect(await titles("sid")).toEqual(["example.test/", "SameSite=Strict"]);
+  expect(await titles("chips")).toEqual(["example.test/", "SameSite=None", `Partitioned(${SITE})`]);
+  expect(await titles("chips_cross")).toEqual(["example.test/", "SameSite=None", `Partitioned(${SITE}, cross-site)`]);
+  expect(await titles("chips_other")).toEqual(["example.test/", "SameSite=None", "Partitioned(https://other.test)"]);
+  expect((await titles("Plain")).at(-1)).toMatch(/\d.*:\d\d/);
   expect(await p.locator("#host").textContent()).toBe(SITE);
 
   await p.check("#reveal");
@@ -422,12 +429,12 @@ test("popup.js uses nothing outside the allowlist", async () => {
     "createElement", "disabled", "domain", "expirationDate", "filter", "getAll", "getElementById",
     "hasCrossSiteAncestor", "hidden", "httpOnly", "includes", "insertCell", "insertRow", "join", "length",
     "localeCompare", "message", "name", "onchange", "onclick", "oninput", "origin", "partitionKey", "path",
-    "permissions", "push", "query", "remove", "replaceChildren", "request", "sameSite", "secure", "session",
-    "setAttribute", "sort", "tabs", "test", "textContent", "then", "toLocaleString", "toLowerCase", "topLevelSite",
+    "permissions", "query", "remove", "replaceChildren", "request", "sameSite", "secure", "session",
+    "setAttribute", "sort", "tabs", "test", "textContent", "then", "toLocaleDateString", "toLocaleString", "toLowerCase", "topLevelSite",
     "url", "value", "writeText"]);
-  expect(attrs).toEqual(["aria-label"]);
-  // A created element is inert only because it is a button; an img, iframe, script or style could load or run.
-  expect(tags).toEqual(["button"]);
+  expect(attrs).toEqual(["title", "title", "aria-label"]);
+  // A created element is inert only because it is a span or a button; an img, iframe, script or style could load or run.
+  expect(tags).toEqual(["span", "button"]);
   const allowedSyntax = ["ArrayExpression", "ArrayPattern", "ArrowFunctionExpression", "AssignmentExpression",
     "AwaitExpression", "BinaryExpression", "BlockStatement", "CallExpression", "CatchClause", "ConditionalExpression",
     "ExpressionStatement", "ForOfStatement", "FunctionDeclaration", "Identifier", "IfStatement", "Literal",
@@ -461,19 +468,25 @@ const POPUP_HTML = `<!doctype html>
 <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-<div id="host" class="muted"></div>
+<header id="head">
+  <svg class="lock" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 10V7.5a4.5 4.5 0 0 1 9 0V10M6 10h12v10H6z"/></svg>
+  <h1>Secure Cookie Viewer</h1>
+  <div id="host"></div>
+</header>
 <div id="bar">
   <input id="filter" placeholder="Filter by name">
   <label><input type="checkbox" id="reveal"> Show values</label>
 </div>
-<button id="grant" hidden>Allow reading this site's cookies</button>
 <div id="msg" class="muted"></div>
+<button id="grant" hidden>Allow reading this site's cookies</button>
+<div id="list">
 <table hidden id="tbl">
   <colgroup><col><col><col><col><col></colgroup>
-  <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>Attributes / Expires</th><th>Copy</th></tr></thead>
+  <thead><tr><th>Name</th><th>Value</th><th>Domain / Path</th><th>Attributes / SameSite / Expires</th><th>Copy</th></tr></thead>
   <tbody id="rows"></tbody>
 </table>
-<button id="revoke" hidden>Revoke access to this site</button>
+</div>
+<footer><button id="revoke" hidden>Revoke access to this site</button></footer>
 <script src="popup.js"></script>
 </body>
 </html>
