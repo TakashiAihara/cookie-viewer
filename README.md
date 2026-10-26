@@ -34,7 +34,9 @@ These tests stop a mistake in this repository from shipping. They are not a guar
 - `scripts/pack.sh` builds the zip reproducibly (fixed timestamps, modes and order), so a zip rebuilt from a tag has the same sha256 as the release
 - Each release is built by GitHub Actions from a tag on `main` after the tests pass, and carries a build provenance attestation (`gh attestation verify secure-cookie-viewer.zip --repo TakashiAihara/secure-cookie-viewer`)
 - The Chrome Web Store repackages what is uploaded, so the attestation covers the GitHub release, not the file Chrome installs. To compare, find the installed files (`chrome://extensions` shows the ID; they are in the profile's `Extensions/<ID>/<version>_0` directory) and diff them against the release zip. The store adds a `_metadata/` directory and rewrites `manifest.json` (it adds keys such as `update_url`); every other file should match byte for byte
-- The plan is to upload updates after the first listing as CRX files signed with a key that is not kept in the Google account (Chrome Web Store "Verified CRX uploads"). Google describes this as a way to "prevent malicious updates if your developer account is compromised"
+- The same workflow then sends that zip to the Chrome Web Store as a CRX signed with a key that is not kept in the Google account (Chrome Web Store "Verified CRX uploads"; Google describes this as a way to "prevent malicious updates if your developer account is compromised"), and the store publishes it once review passes
+- The signing key is a secret of the `cws-release` environment, which only `v*` tags may use. The workflow reaches the Chrome Web Store API through OIDC (Workload Identity Federation): Google accepts the token only from `release.yml` on a `v*` tag of this repository in that environment, and no Google credential is stored on GitHub
+- So a compromised Google account alone cannot ship an update, but a compromised GitHub account can, by pushing a tag. This is a hobby project; the key is kept on GitHub rather than in a KMS for that reason
 
 ### Limits
 
