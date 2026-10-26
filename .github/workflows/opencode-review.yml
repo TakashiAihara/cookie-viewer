@@ -2,7 +2,7 @@ name: opencode-review
 
 # Reviews each PR with opencode on a free Zen model. The workflow, its model and its
 # permissions live in TakashiAihara/opencode-review. It is pinned to a commit because it receives
-# a secret; Dependabot opens a PR when that repo moves on.
+# a secret. That repo has no tags, so Dependabot does not move the pin; update the SHA by hand.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -12,6 +12,8 @@ permissions:
 
 jobs:
   opencode:
+    # Dependabot PRs do not receive repository secrets, so the review would only fail on them.
+    if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read
       pull-requests: write
